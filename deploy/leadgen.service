@@ -1,0 +1,38 @@
+# systemd-юнит сборщика лидов.
+# Ставится в /etc/systemd/system/leadgen.service (см. deploy/bootstrap.sh).
+
+[Unit]
+Description=Leadgen — сборщик лидов kahman.studio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=leadgen
+Group=leadgen
+WorkingDirectory=/opt/leadgen
+
+# База лежит ВНЕ репозитория: деплой делает git reset --hard,
+# и собранные лиды не должны от этого пострадать.
+Environment=LEADGEN_DB=/var/lib/leadgen/leads.db
+Environment=LEADGEN_HOST=127.0.0.1
+Environment=LEADGEN_PORT=8765
+
+# Токен Dadata и прочие секреты — здесь, в репозиторий они не попадают.
+# Минус перед путём означает «файла может не быть, это не ошибка».
+EnvironmentFile=-/etc/leadgen.env
+
+ExecStart=/opt/leadgen/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8765
+Restart=always
+RestartSec=3
+
+# Базовая изоляция: сервис ходит в интернет и разбирает чужой HTML,
+# поэтому прав у него должно быть ровно столько, сколько нужно.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/leadgen /opt/leadgen/.cache
+
+[Install]
+WantedBy=multi-user.target

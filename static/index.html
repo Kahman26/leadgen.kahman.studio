@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Сборщик лидов — ниша бронирования</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Сборщик лидов</h1>
+  <span class="city" id="cityLabel">—</span>
+  <span class="spacer"></span>
+  <button id="btnImport">Импорт CSV</button>
+  <button id="btnExport">Выгрузить в CSV</button>
+  <button id="btnRun" class="primary">Запустить сбор</button>
+</header>
+
+<div class="wrap">
+
+  <div class="runbox" id="runbox">
+    <div><b id="runStage">—</b> <span class="muted" id="runCount"></span></div>
+    <div class="bar"><i id="runBar"></i></div>
+    <div class="log" id="runLog"></div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="filters">
+    <input type="search" id="q" placeholder="Поиск: название, адрес, сайт, ИНН">
+    <select id="fReason"><option value="">Любой признак</option></select>
+    <select id="fCategory"><option value="">Любая категория</option></select>
+    <select id="fStatus"><option value="">Любой статус</option></select>
+    <select id="fHas">
+      <option value="">Контакты: любые</option>
+      <option value="contact">Есть хоть один контакт</option>
+      <option value="phone">Есть телефон</option>
+      <option value="telegram">Есть Telegram</option>
+      <option value="vk">Есть ВКонтакте</option>
+      <option value="none">Контактов нет</option>
+    </select>
+    <select id="fSort">
+      <option value="score">Сортировать: по баллу</option>
+      <option value="new">по дате добавления</option>
+      <option value="name">по названию</option>
+      <option value="checked">по дате проверки</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="muted" id="count"></span>
+  </div>
+
+  <div class="tablebox">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:34%">Объект</th>
+          <th>Признак</th>
+          <th style="width:52px">Балл</th>
+          <th>Контакты</th>
+          <th>Сайт</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>Пока пусто. Нажмите «Запустить сбор».</div>
+  </div>
+
+  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+    <button id="prev">← Назад</button>
+    <span class="muted" id="page"></span>
+    <button id="next">Вперёд →</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="drawer"></aside>
+
+<dialog id="runDialog">
+  <h3 style="margin-top:0">Что собираем</h3>
+  <label class="row"><input type="checkbox" id="optOsm" checked> OpenStreetMap — объекты на карте города</label>
+  <label class="row"><input type="checkbox" id="optDadata" checked> Dadata — компании ниши из ЕГРЮЛ <span class="muted" id="dadataHint"></span></label>
+  <label class="row"><input type="checkbox" id="optWhois"> Проверять домены через whois <span class="muted">(медленно)</span></label>
+  <label class="row"><input type="checkbox" id="optCache" checked> Использовать кеш карты (сутки)</label>
+  <div style="display:flex;gap:8px;align-items:center;margin-top:16px">
+    <button id="runRescore" title="Применить новые веса из scoring.py к уже собранным лидам">
+      Только пересчитать баллы
+    </button>
+    <span class="spacer" style="flex:1"></span>
+    <button id="runCancel">Отмена</button>
+    <button id="runGo" class="primary">Поехали</button>
+  </div>
+</dialog>
+
+<input type="file" id="fileInput" accept=".csv" hidden>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
