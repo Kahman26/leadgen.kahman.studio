@@ -129,12 +129,14 @@ td .sub { color: var(--muted); font-size: 12px; }
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; border: 1px solid var(--line); white-space: nowrap;
 }
+.badge.r-LIQUIDATED { background: #f2f4f7; border-color: #98a2b3; color: #475467; text-decoration: line-through; }
 .badge.r-NO_SITE, .badge.r-SITE_DEAD { background: #fef3f2; border-color: #fda29b; color: #b42318; }
 .badge.r-NO_MOBILE, .badge.r-CHEAP_BUILDER, .badge.r-OUTDATED,
 .badge.r-NO_BOOKING { background: #fffaeb; border-color: #fec84b; color: #b54708; }
 .badge.r-OK { background: #ecfdf3; border-color: #75e0a7; color: #067647; }
 @media (prefers-color-scheme: dark) {
-  .badge.r-NO_SITE, .badge.r-SITE_DEAD { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
+  .badge.r-LIQUIDATED { background: #f2f4f7; border-color: #98a2b3; color: #475467; text-decoration: line-through; }
+.badge.r-NO_SITE, .badge.r-SITE_DEAD { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
   .badge.r-NO_MOBILE, .badge.r-CHEAP_BUILDER, .badge.r-OUTDATED,
   .badge.r-NO_BOOKING { background: #2a2110; border-color: #7a5c1e; color: #f7c469; }
   .badge.r-OK { background: #10241a; border-color: #1f5c3d; color: #6ee7a8; }

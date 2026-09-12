@@ -24,6 +24,7 @@ REASONS = {
     "NO_BOOKING":    ("Ни брони, ни заявки",         52, 20),
     "REQUEST_ONLY":  ("Бронь только через заявку",    48, 12),
     "SLOW":          ("Долго грузится",              35,  8),
+    "LIQUIDATED":    ("Ликвидирована по ЕГРЮЛ",     120,  0),
     "BLOCKED":       ("Сайт не удалось проверить",   10,  0),
     "OK":            ("Сайт в порядке",               0,  0),
 }
@@ -40,6 +41,9 @@ def _pitch(code, lead, audit):
     cms = audit.get("cms") or "конструкторе"
     year = audit.get("copyright_year")
 
+    if code == "LIQUIDATED":
+        return (f"По ЕГРЮЛ организация ликвидирована — звонить некуда. "
+                f"Стоит скрыть лид, чтобы он не мешал в работе.")
     if code == "NO_SITE":
         return (f"У «{name}» нет своего сайта — значит все брони идут через Суточно, "
                 f"Авито и Островок, а это 15–20% комиссии с каждой. Свой сайт с прямым "
@@ -76,6 +80,16 @@ def score_lead(lead, audit):
     """Возвращает (reason_code, reason_text, missing[], pitch, score)."""
     problems = []          # коды найденных проблем
     missing = []           # чего не хватает, словами
+
+    # Ликвидированной компании сайт не нужен. Это не «плохой лид»,
+    # это вообще не лид — балл обнуляем, дальше можно не считать.
+    if (lead.get("org_status") or "") in ("LIQUIDATED", "BANKRUPT"):
+        when = lead.get("liquidated_at") or ""
+        gaps = [f"Организация ликвидирована по ЕГРЮЛ{f' ({when})' if when else ''}"]
+        if lead.get("org_name"):
+            gaps.append(f"В реестре: {lead['org_name']}")
+        return ("LIQUIDATED", REASONS["LIQUIDATED"][0], gaps,
+                _pitch("LIQUIDATED", lead, audit), 0)
 
     status = audit.get("site_status")
     has_site = bool((lead.get("website") or "").strip())
@@ -127,6 +141,9 @@ def score_lead(lead, audit):
         if load > SLOW_MS:
             problems.append("SLOW")
             missing.append(f"Главная грузится {load / 1000:.1f} с")
+
+    if (lead.get("org_status") or "") == "LIQUIDATING":
+        missing.append("По ЕГРЮЛ организация в стадии ликвидации")
 
     if not problems:
         problems.append("OK")

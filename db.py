@@ -25,12 +25,21 @@ CREATE TABLE IF NOT EXISTS leads (
     source_ref      TEXT,                -- ссылка на объект OSM или ИНН
     source_detail   TEXT,                -- человеко-читаемо: «OSM, tourism=hotel»
 
-    -- реквизиты (приходят из Dadata)
+    -- реквизиты из ЕГРЮЛ (Dadata)
     inn             TEXT,
     ogrn            TEXT,
+    org_name        TEXT,                -- как компания называется в реестре
+    org_status      TEXT,                -- ACTIVE | LIQUIDATING | LIQUIDATED | ...
+    org_status_text TEXT,                -- то же словами
     director        TEXT,
+    director_post   TEXT,
     okved           TEXT,
+    legal_address   TEXT,
     registered_at   TEXT,
+    liquidated_at   TEXT,
+    employee_count  INTEGER,
+    dadata_confidence TEXT,              -- high | medium: насколько верим совпадению
+    dadata_match    TEXT,                -- чем именно подтверждено
 
     -- контакты
     phone           TEXT,                -- основной
@@ -121,6 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_score  ON leads(score DESC);
 CREATE INDEX IF NOT EXISTS idx_leads_reason ON leads(reason_code);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
 CREATE INDEX IF NOT EXISTS idx_leads_hidden ON leads(hidden);
+CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(org_status);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 """
 
@@ -132,6 +142,15 @@ MIGRATIONS = [
     ("previous_website", "TEXT DEFAULT ''"),
     ("website_manual", "INTEGER DEFAULT 0"),
     ("booking_type", "TEXT DEFAULT ''"),
+    ("org_name", "TEXT DEFAULT ''"),
+    ("org_status", "TEXT DEFAULT ''"),
+    ("org_status_text", "TEXT DEFAULT ''"),
+    ("director_post", "TEXT DEFAULT ''"),
+    ("legal_address", "TEXT DEFAULT ''"),
+    ("liquidated_at", "TEXT DEFAULT ''"),
+    ("employee_count", "INTEGER"),
+    ("dadata_confidence", "TEXT DEFAULT ''"),
+    ("dadata_match", "TEXT DEFAULT ''"),
 ]
 
 
@@ -159,7 +178,9 @@ def now():
 # Поля, которые заполняет сборщик и которые можно безопасно обновлять.
 UPSERT_FIELDS = [
     "name", "category", "address", "lat", "lon", "source_detail",
-    "inn", "ogrn", "director", "okved", "registered_at",
+    "inn", "ogrn", "org_name", "org_status", "org_status_text",
+    "director", "director_post", "okved", "legal_address", "registered_at",
+    "liquidated_at", "employee_count", "dadata_confidence", "dadata_match",
     "phone", "phones", "telegram", "vk", "whatsapp", "email", "contact_source",
     "website", "final_url", "site_status", "http_code", "https", "mobile_ready",
     "online_booking", "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",

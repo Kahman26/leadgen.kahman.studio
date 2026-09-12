@@ -116,7 +116,7 @@ def get_config(request: Request):
 
 # ── выборка лидов ────────────────────────────────────────────────────────────
 
-def _where(reason, status, category, q, has, source, hidden=""):
+def _where(reason, status, category, q, has, source, hidden="", org=""):
     sql, params = [], []
 
     # По умолчанию скрытые не показываем: их убрали именно чтобы не мешали.
@@ -124,6 +124,15 @@ def _where(reason, status, category, q, has, source, hidden=""):
         sql.append("hidden = 1")
     elif hidden != "all":
         sql.append("COALESCE(hidden, 0) = 0")
+
+    if org == "active":
+        sql.append("COALESCE(org_status,'') = 'ACTIVE'")
+    elif org == "dead":
+        sql.append("COALESCE(org_status,'') IN ('LIQUIDATED','BANKRUPT')")
+    elif org == "liquidating":
+        sql.append("COALESCE(org_status,'') = 'LIQUIDATING'")
+    elif org == "unknown":
+        sql.append("COALESCE(org_status,'') = ''")
 
     if reason:
         sql.append("reason_code = ?")
@@ -157,9 +166,9 @@ def _where(reason, status, category, q, has, source, hidden=""):
 
 @app.get("/api/leads")
 def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "",
-              has: str = "", source: str = "", hidden: str = "", sort: str = "score",
-              limit: int = 100, offset: int = 0):
-    where, params = _where(reason, status, category, q, has, source, hidden)
+              has: str = "", source: str = "", hidden: str = "", org: str = "",
+              sort: str = "score", limit: int = 100, offset: int = 0):
+    where, params = _where(reason, status, category, q, has, source, hidden, org)
     order = SORTS.get(sort, SORTS["score"])
     c = db.conn()
     total = c.execute(f"SELECT COUNT(*) n FROM leads {where}", params).fetchone()["n"]
@@ -190,12 +199,19 @@ def get_stats():
     hot = c.execute(f"SELECT COUNT(*) n FROM leads WHERE {visible} AND score >= ?",
                     (scoring.HOT,)).fetchone()["n"]
     hidden_count = c.execute("SELECT COUNT(*) n FROM leads WHERE hidden = 1").fetchone()["n"]
+    liquidated = c.execute(
+        f"SELECT COUNT(*) n FROM leads WHERE {visible} AND "
+        "COALESCE(org_status,'') IN ('LIQUIDATED','BANKRUPT')").fetchone()["n"]
+    in_egrul = c.execute(
+        f"SELECT COUNT(*) n FROM leads WHERE {visible} AND COALESCE(inn,'') <> ''").fetchone()["n"]
 
     return {
         "total": total,
         "with_contact": with_contact,
         "hot": hot,
         "hidden": hidden_count,
+        "liquidated": liquidated,
+        "in_egrul": in_egrul,
         "by_reason": group("reason_code"),
         "by_status": group("status"),
         "by_category": group("category"),
@@ -282,6 +298,7 @@ def start_run(payload: dict = Body(default={})):
         use_dadata=payload.get("use_dadata", True),
         do_whois=payload.get("do_whois", False),
         use_cache=payload.get("use_cache", True),
+        dadata_discover=payload.get("dadata_discover", False),
     )
     return {"ok": True}
 
@@ -307,15 +324,19 @@ EXPORT_COLUMNS = [
     ("vk", "ВКонтакте"), ("whatsapp", "WhatsApp"), ("email", "Почта"),
     ("website", "Сайт"), ("address", "Адрес"), ("missing", "Чего не хватает"),
     ("pitch", "С чего начать разговор"), ("source_detail", "Откуда лид"),
-    ("contact_source", "Откуда контакт"), ("director", "Руководитель"),
-    ("inn", "ИНН"), ("status", "Статус"), ("note", "Заметка"),
+    ("contact_source", "Откуда контакт"), ("org_name", "В реестре"),
+    ("org_status_text", "Статус организации"), ("director", "Руководитель"),
+    ("inn", "ИНН"), ("legal_address", "Юр. адрес"),
+    ("dadata_confidence", "Точность совпадения"),
+    ("status", "Статус"), ("note", "Заметка"),
 ]
 
 
 @app.get("/api/export.csv")
 def export_csv(reason: str = "", status: str = "", category: str = "",
-               q: str = "", has: str = "", source: str = "", hidden: str = ""):
-    where, params = _where(reason, status, category, q, has, source, hidden)
+               q: str = "", has: str = "", source: str = "", hidden: str = "",
+               org: str = ""):
+    where, params = _where(reason, status, category, q, has, source, hidden, org)
     rows = db.conn().execute(
         f"SELECT * FROM leads {where} ORDER BY score DESC", params).fetchall()
 

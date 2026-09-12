@@ -34,6 +34,7 @@ function params(extra = {}) {
   if ($('fStatus').value) p.set('status', $('fStatus').value);
   if ($('fHas').value) p.set('has', $('fHas').value);
   if ($('fHidden').value) p.set('hidden', $('fHidden').value);
+  if ($('fOrg').value) p.set('org', $('fOrg').value);
   p.set('sort', $('fSort').value);
   if (statFilter) Object.entries(statFilter).forEach(([k, v]) => p.set(k, v));
   Object.entries(extra).forEach(([k, v]) => p.set(k, v));
@@ -49,6 +50,8 @@ async function loadStats() {
     { n: s.total, t: 'Всего в базе', f: null },
     { n: s.hot, t: `Горячих (балл ≥ ${CFG.hot})`, f: null },
     { n: s.with_contact, t: 'С контактами', f: { has: 'contact' } },
+    { n: s.in_egrul || 0, t: 'Найдены в ЕГРЮЛ', f: { org: 'active' } },
+    { n: s.liquidated || 0, t: 'Ликвидированы', f: { org: 'dead' } },
     { n: s.hidden || 0, t: 'Скрытые', f: { hidden: 'only' } },
   ];
   for (const [code, n] of Object.entries(s.by_reason)) {
@@ -65,7 +68,8 @@ async function loadStats() {
   [...$('stats').children].forEach((el, i) => el.onclick = () => {
     const f = cards[i].f;
     statFilter = (JSON.stringify(f) === JSON.stringify(statFilter)) ? null : f;
-    if (statFilter) { $('fReason').value = ''; $('fHas').value = ''; $('fHidden').value = ''; }
+    if (statFilter) { $('fReason').value = ''; $('fHas').value = '';
+                      $('fHidden').value = ''; $('fOrg').value = ''; }
     offset = 0; loadStats(); loadLeads();
   });
 
@@ -149,9 +153,21 @@ async function openLead(id) {
     ['Домен до', l.domain_expires || '—'],
   ];
 
+  const boss = l.director
+    ? l.director + (l.director_post ? `, ${l.director_post.toLowerCase()}` : '')
+    : '';
   const req = [
-    ['Руководитель', l.director], ['ИНН', l.inn], ['ОКВЭД', l.okved],
-    ['Регистрация', l.registered_at], ['Адрес', l.address],
+    ['В реестре', l.org_name],
+    ['Статус', l.org_status_text],
+    ['Руководитель', boss],
+    ['ИНН', l.inn],
+    ['ОГРН', l.ogrn],
+    ['ОКВЭД', l.okved],
+    ['Юр. адрес', l.legal_address],
+    ['Регистрация', l.registered_at],
+    ['Ликвидирована', l.liquidated_at],
+    ['Сотрудников', l.employee_count],
+    ['Адрес на карте', l.address],
   ].filter(([, v]) => v);
 
   const cs = Object.entries(l.contact_source || {});
@@ -211,8 +227,14 @@ async function openLead(id) {
       <span class="muted" id="siteMsg"></span>
     </div>
 
-    ${req.length ? `<div class="section"><h3>Реквизиты</h3>
-      <dl class="kv">${req.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>` : ''}
+    ${req.length ? `<div class="section"><h3>Реквизиты по ЕГРЮЛ</h3>
+      <dl class="kv">${req.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      ${l.dadata_confidence === 'medium' ? `<div class="wasurl">
+        Совпадение неточное — проверьте, та ли это компания.<br>${esc(l.dadata_match || '')}
+      </div>` : ''}
+      ${l.dadata_confidence === 'high' && l.dadata_match ? `<div class="muted"
+        style="margin-top:6px;font-size:12px">Подтверждено: ${esc(l.dadata_match)}</div>` : ''}
+      </div>` : ''}
 
     <div class="section">
       <h3>Откуда лид</h3>
@@ -394,7 +416,7 @@ async function init() {
   const rerun = () => { offset = 0; statFilter = null; loadLeads(); loadStats(); };
   let t;
   $('q').oninput = () => { clearTimeout(t); t = setTimeout(rerun, 300); };
-  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fHidden', 'fSort']
+  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fHidden', 'fOrg', 'fSort']
     .forEach((id) => $(id).onchange = rerun);
 
   $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadLeads(); };
@@ -417,6 +439,7 @@ async function init() {
       body: JSON.stringify({
         use_osm: $('optOsm').checked, use_dadata: $('optDadata').checked,
         do_whois: $('optWhois').checked, use_cache: $('optCache').checked,
+        dadata_discover: $('optDiscover').checked,
       }),
     });
     startPolling();

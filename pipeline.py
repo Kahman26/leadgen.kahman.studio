@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import config
 import db
 import scoring
-from enrich import site_audit, whois_check
+from enrich import dadata_lookup, site_audit, whois_check
 from sources import dadata, overpass
 
 # ── состояние запуска для веб-интерфейса ─────────────────────────────────────
@@ -75,8 +75,27 @@ def merge_sources(osm_leads, dadata_leads):
 
 # ── проверка одного лида ─────────────────────────────────────────────────────
 
-def process_lead(lead, do_whois=False):
+def enrich_from_egrul(lead):
+    """Подтягивает данные ЕГРЮЛ. Молча пропускает, если совпадение неуверенное."""
+    try:
+        found = (dadata_lookup.by_inn(lead["inn"]) if lead.get("inn")
+                 else dadata_lookup.by_name(lead.get("name", ""), lead.get("address") or ""))
+    except PermissionError:
+        raise
+    except Exception:
+        return False                       # сеть или лимит — лид всё равно нужен
+
+    if not found:
+        return False
+    lead.update(found)
+    return True
+
+
+def process_lead(lead, do_whois=False, do_dadata=False):
     """Аудит сайта + добор контактов со страницы + скоринг."""
+    if do_dadata:
+        enrich_from_egrul(lead)
+
     audit = site_audit.audit(lead.get("website", ""))
 
     contacts = audit.get("contacts") or {}
@@ -125,7 +144,8 @@ def process_lead(lead, do_whois=False):
 
 # ── полный прогон ────────────────────────────────────────────────────────────
 
-def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True):
+def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
+        dadata_discover=False):
     with _lock:
         if _state["running"]:
             return
@@ -138,7 +158,7 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True):
 
     try:
         osm_leads = overpass.fetch(_log, use_cache) if use_osm else []
-        dadata_leads = dadata.fetch(_log) if use_dadata else []
+        dadata_leads = dadata.fetch(_log) if dadata_discover else []
 
         leads, merged = merge_sources(osm_leads, dadata_leads)
         if merged:
@@ -148,13 +168,18 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True):
         with _lock:
             _state["total"] = len(leads)
 
-        _log(f"Проверяю {len(leads)} объектов в {config.HTTP_WORKERS} потоков")
+        egrul = use_dadata and bool(config.DADATA_TOKEN)
+        if use_dadata and not egrul:
+            _log("ЕГРЮЛ пропускаю: не задан DADATA_TOKEN")
+
+        _log(f"Проверяю {len(leads)} объектов в {config.HTTP_WORKERS} потоков"
+             + (" + сверка с ЕГРЮЛ" if egrul else ""))
 
         # Пишем в базу по мере готовности: медленный сайт не тормозит очередь,
         # а обрыв на середине не обнуляет всю работу.
         added = updated = done = 0
         with ThreadPoolExecutor(max_workers=config.HTTP_WORKERS) as pool:
-            futures = [pool.submit(process_lead, l, do_whois) for l in leads]
+            futures = [pool.submit(process_lead, l, do_whois, egrul) for l in leads]
             for fut in as_completed(futures):
                 done += 1
                 try:
@@ -209,7 +234,7 @@ def recheck_lead(lead_id, drop_site_contacts=False):
         lead["contact_source"] = src
         lead["phones"] = []
 
-    processed = process_lead(lead)
+    processed = process_lead(lead, do_dadata=bool(config.DADATA_TOKEN))
 
     fields = [f for f in db.UPSERT_FIELDS if f in processed]
     sets = ", ".join(f"{f}=?" for f in fields)
