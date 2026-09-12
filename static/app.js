@@ -8,6 +8,7 @@ let offset = 0;
 let total = 0;
 let statFilter = null;      // быстрый фильтр по клику на карточку статистики
 let pollTimer = null;
+let selectedId = null;   // какой лид открыт в правой панели
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -98,13 +99,13 @@ async function loadLeads() {
   total = data.total;
 
   $('rows').innerHTML = data.items.map((l) => `
-    <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden' : ''}">
+    <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden ' : ''}${String(l.id) === String(selectedId) ? 'selected' : ''}">
       <td>
         <div class="name">${esc(l.name)}</div>
         <div class="sub">${esc(l.category || '')}${l.address ? ' · ' + esc(l.address) : ''}</div>
       </td>
       <td><span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span></td>
-      <td><span class="score ${scoreClass(l.score)}">${l.score}</span></td>
+      <td class="num"><span class="score ${scoreClass(l.score)}">${l.score}</span></td>
       <td>${contactChips(l)}</td>
       <td>${l.website
             ? `<a class="chip" target="_blank" rel="noopener" href="${esc(l.website)}">сайт ↗</a>`
@@ -148,11 +149,15 @@ async function openLead(id) {
   const cs = Object.entries(l.contact_source || {});
 
   $('drawer').innerHTML = `
-    <button class="close" onclick="closeLead()">Закрыть</button>
-    <h2>${esc(l.name)}</h2>
-    <div class="muted">${esc(l.category || '')} · балл
-      <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
-      <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
+    <div class="cardhead">
+      <div>
+        <h2>${esc(l.name)}</h2>
+        <div class="muted">${esc(l.category || '')} · балл
+          <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
+          <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
+        </div>
+      </div>
+      <button class="close" onclick="closeLead()">✕</button>
     </div>
 
     <div class="section">
@@ -186,8 +191,7 @@ async function openLead(id) {
         <button id="saveSite">Сохранить</button>
       </div>
       <div class="muted" style="margin-top:6px;font-size:12px">
-        Компания могла сменить домен — впишите рабочий адрес,
-        и лид сразу перепроверится.
+        Компания могла сменить домен — впишите рабочий адрес.
       </div>
 
       ${l.previous_website ? `
@@ -235,9 +239,6 @@ async function openLead(id) {
         <input type="text" id="hideReason" placeholder="Причина: закрылись, не профиль…"
                style="width:100%;margin-bottom:8px">
         <button id="hide" class="danger">Скрыть из списка</button>
-        <div class="muted" style="margin-top:6px;font-size:12px">
-          Данные останутся в базе — лид просто перестанет попадаться в работе.
-        </div>
       `}
     </div>`;
 
@@ -316,13 +317,24 @@ async function openLead(id) {
     };
   }
 
-  $('drawer').classList.add('on');
-  $('overlay').classList.add('on');
+  selectedId = String(id);
+  markSelected();
+  $('drawer').classList.add('on');        // на узком экране панель выезжает поверх
 }
 
+function markSelected() {
+  [...$('rows').children].forEach((tr) => {
+    tr.classList.toggle('selected', tr.dataset.id === String(selectedId));
+  });
+}
+
+const PLACEHOLDER = '<div class="placeholder">Выберите объект в списке слева</div>';
+
 function closeLead() {
+  selectedId = null;
+  markSelected();
   $('drawer').classList.remove('on');
-  $('overlay').classList.remove('on');
+  $('drawer').innerHTML = PLACEHOLDER;
 }
 window.closeLead = closeLead;
 
@@ -366,6 +378,8 @@ async function init() {
   $('optDadata').checked = CFG.dadata_ready;
   $('optDadata').disabled = !CFG.dadata_ready;
 
+  $('drawer').innerHTML = PLACEHOLDER;
+
   await loadStats();
   await loadLeads();
 
@@ -377,7 +391,6 @@ async function init() {
 
   $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadLeads(); };
   $('next').onclick = () => { offset += PAGE; loadLeads(); };
-  $('overlay').onclick = closeLead;
   document.onkeydown = (e) => { if (e.key === 'Escape') closeLead(); };
 
   $('btnExport').onclick = () => { location.href = '/api/export.csv?' + params(); };

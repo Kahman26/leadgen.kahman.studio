@@ -58,32 +58,37 @@
     <span class="muted" id="count"></span>
   </div>
 
-  <div class="tablebox">
-    <table>
-      <thead>
-        <tr>
-          <th style="width:34%">Объект</th>
-          <th>Признак</th>
-          <th style="width:52px">Балл</th>
-          <th>Контакты</th>
-          <th>Сайт</th>
-          <th>Статус</th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div class="empty" id="empty" hidden>Пока пусто. Нажмите «Запустить сбор».</div>
-  </div>
+  <div class="workspace">
+    <div class="main">
+      <div class="tablebox">
+        <table>
+          <thead>
+            <tr>
+              <th>Объект</th>
+              <th>Признак</th>
+              <th class="num">Балл</th>
+              <th>Контакты</th>
+              <th>Сайт</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>Пока пусто. Нажмите «Запустить сбор».</div>
+      </div>
 
-  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-    <button id="prev">← Назад</button>
-    <span class="muted" id="page"></span>
-    <button id="next">Вперёд →</button>
+      <div class="pager">
+        <button id="prev">← Назад</button>
+        <span class="muted" id="page"></span>
+        <button id="next">Вперёд →</button>
+      </div>
+    </div>
+
+    <!-- Панель карточки стоит рядом с таблицей, а не поверх неё:
+         пока лид не выбран, здесь просто пустое место. -->
+    <aside class="side" id="drawer"></aside>
   </div>
 </div>
-
-<div class="overlay" id="overlay"></div>
-<aside class="drawer" id="drawer"></aside>
 
 <dialog id="runDialog">
   <h3 style="margin-top:0">Что собираем</h3>
