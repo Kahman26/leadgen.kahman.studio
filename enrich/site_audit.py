@@ -34,8 +34,35 @@ BOOKING_ENGINES = {
     "Своя форма брони": [r"booking\.php", r"/booking/", r"bookingform"],
 }
 
-# Слова в тексте, которые тоже говорят о живом бронировании.
-BOOKING_WORDS = [r"забронирова", r"онлайн-бронь", r"онлайн бронирован", r"book now"]
+# ── Заявки: гость оставляет контакты, менеджер перезванивает ─────────────────
+# Это не бронирование. Для отеля разница принципиальная: заявку надо обработать
+# руками, ночью и в выходные она остывает.
+REQUEST_WIDGETS = {
+    "Битрикс24": [r"bitrix24", r"b24form"],
+    "amoCRM": [r"amocrm"],
+    "JivoSite": [r"jivosite", r"jivo\.(ru|chat)"],
+    "Envybox": [r"envybox", r"envycdn"],
+    "Callibri": [r"callibri"],
+    "Calltouch": [r"calltouch"],
+    "Marquiz": [r"marquiz"],
+    "Verbox": [r"verbox"],
+}
+
+REQUEST_WORDS = [
+    r"оставить заявку", r"оставьте заявку", r"отправить заявку",
+    r"заявка на бронирован", r"заказать звонок", r"обратный звонок",
+    r"закажите звонок", r"мы перезвоним", r"свяжемся с вами",
+    r"перезвоним вам", r"забронирова",
+]
+
+# ── Признаки настоящего календаря на своём сайте ─────────────────────────────
+# Ключевое отличие от заявки: гость сам выбирает даты заезда и выезда.
+DATE_FIELD_HINTS = re.compile(
+    r"check[_-]?in|check[_-]?out|arrival|departure|date[_-]?from|date[_-]?to|"
+    r"zaezd|vyezd|заезд|выезд|дата", re.I)
+DATEPICKER_LIBS = [r"daterangepicker", r"air-datepicker", r"litepicker",
+                   r"flatpickr", r"datepicker", r"fullcalendar"]
+DATE_WORDS = [r"дата заезда", r"дата выезда", r"выберите даты", r"даты проживания"]
 
 # ── Движки и конструкторы сайта ──────────────────────────────────────────────
 CMS_MARKERS = {
@@ -168,6 +195,105 @@ def extract_contacts(html, text=None):
     }
 
 
+# Заглушка, которая ставит cookie скриптом и перезагружает страницу.
+# Так делает, например, Beget: без этого в аудит попадают 300 байт пустого
+# html, и сайт ошибочно выглядит как «без мобильной версии и без контактов».
+RE_COOKIE_SET = re.compile(r"document\.cookie\s*=\s*['\"]([A-Za-z0-9_\-]+)=([A-Za-z0-9_\-]+)")
+
+
+def _is_cookie_challenge(html):
+    return (len(html) < 3000
+            and "document.cookie" in html
+            and ("location.reload" in html or "location.href" in html))
+
+
+def _solve_cookie_challenge(sess, resp):
+    """Ставит cookie, которую страница просила выставить, и грузит её заново."""
+    m = RE_COOKIE_SET.search(resp.text)
+    if not m:
+        return None
+    # Домен намеренно не указываем: с явным доменом requests не отдаёт cookie
+    # обратно на хосты с www. Сессия и так своя на каждый сайт.
+    sess.cookies.set(m.group(1), m.group(2))
+    try:
+        return sess.get(resp.url, timeout=config.HTTP_TIMEOUT, allow_redirects=True)
+    except requests.RequestException:
+        return None
+
+
+def _has_date_fields(soup, html, text):
+    """Есть ли на странице выбор дат заезда и выезда.
+
+    Одних слов «заезд» и «выезд» мало: они есть почти на каждом сайте
+    отеля («заезд с 14:00»). Нужно именно поле ввода.
+    """
+    for el in soup.find_all(["input", "select"]):
+        if (el.get("type") or "").lower() == "date":
+            return True
+        blob = " ".join(filter(None, [
+            el.get("name", ""), el.get("id", ""), el.get("placeholder", ""),
+            " ".join(el.get("class") or []),
+        ]))
+        if blob and DATE_FIELD_HINTS.search(blob):
+            return True
+
+    # Календарь подключён скриптом, а поля рисуются на лету
+    low = html.lower()
+    if any(re.search(lib, low) for lib in DATEPICKER_LIBS) and \
+            any(re.search(w, text, re.I) for w in DATE_WORDS):
+        return True
+    return False
+
+
+def _has_request_form(soup):
+    """Форма, куда гость оставляет контакты."""
+    for form in soup.find_all("form"):
+        fields = form.find_all(["input", "textarea"])
+        if not fields:
+            continue
+
+        blob = " ".join(
+            " ".join(filter(None, [f.get("name", ""), f.get("type", ""),
+                                   f.get("placeholder", ""), f.get("id", "")]))
+            for f in fields
+        ).lower()
+
+        if "password" in blob:
+            continue                       # форма входа, а не заявка
+        if re.search(r"search|поиск", blob) and not re.search(r"phone|tel|телефон", blob):
+            continue                       # поисковая строка
+
+        if re.search(r"phone|tel|телефон|имя|\bname\b|email|mail", blob):
+            return True
+    return False
+
+
+def detect_booking(html, soup, text):
+    """Как гость может забронировать: сам, через заявку или никак.
+
+    Возвращает (тип, чем именно): engine | request | none.
+    """
+    engine = _detect(html, BOOKING_ENGINES)
+    if engine:
+        return "engine", engine
+
+    if _has_date_fields(soup, html, text):
+        return "engine", "Свой модуль с выбором дат"
+
+    widget = _detect(html, REQUEST_WIDGETS)
+    if widget:
+        return "request", widget
+
+    if _has_request_form(soup):
+        return "request", "Форма заявки"
+
+    # Форму могло дорисовать скриптом — смотрим на текст кнопок
+    if any(re.search(w, text, re.I) for w in REQUEST_WORDS):
+        return "request", "Кнопка заявки"
+
+    return "none", ""
+
+
 def _detect(html, markers):
     low = html.lower()
     for name, pats in markers.items():
@@ -192,7 +318,8 @@ def audit(url):
     """Возвращает результат проверки сайта. Исключений не бросает."""
     res = {
         "site_status": "dead", "http_code": None, "https": 0, "mobile_ready": 0,
-        "online_booking": 0, "booking_engine": "", "cms": "", "copyright_year": 0,
+        "online_booking": 0, "booking_type": "none", "booking_engine": "",
+        "cms": "", "copyright_year": 0,
         "load_ms": None, "final_url": "", "contacts": {}, "error": "",
     }
     url = normalize_url(url)
@@ -237,8 +364,18 @@ def audit(url):
     if resp.status_code >= 400:
         return res                          # 404/5xx — сайт действительно не работает
 
-    res["site_status"] = "ok"
     html = resp.text or ""
+
+    # Страница могла оказаться заглушкой, которая ставит cookie и перезагружается
+    if _is_cookie_challenge(html):
+        retried = _solve_cookie_challenge(sess, resp)
+        if retried is not None and retried.status_code < 400:
+            resp = retried
+            html = resp.text or ""
+            res["http_code"] = resp.status_code
+            res["final_url"] = utils.decode_idna(resp.url)
+
+    res["site_status"] = "ok"
 
     try:
         soup = BeautifulSoup(html, "lxml")
@@ -250,12 +387,14 @@ def audit(url):
     res["mobile_ready"] = 1 if vp and "width" in (vp.get("content") or "") else 0
 
     res["cms"] = _detect(html, CMS_MARKERS)
-    engine = _detect(html, BOOKING_ENGINES)
-    res["booking_engine"] = engine
 
     text = soup.get_text(" ", strip=True)
-    res["online_booking"] = 1 if engine or any(
-        re.search(w, text, re.I) for w in BOOKING_WORDS) else 0
+    booking_type, how = detect_booking(html, soup, text)
+    res["booking_type"] = booking_type
+    res["booking_engine"] = how
+    # Отдельный флаг оставлен для совместимости: 1 — только настоящая бронь,
+    # заявка сюда не считается.
+    res["online_booking"] = 1 if booking_type == "engine" else 0
     res["copyright_year"] = _copyright_year(text[-4000:] or text)
 
     # Контакты: главная, при нехватке — страница контактов.

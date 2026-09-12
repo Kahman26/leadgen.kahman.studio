@@ -48,8 +48,9 @@ CREATE TABLE IF NOT EXISTS leads (
     http_code       INTEGER,
     https           INTEGER,
     mobile_ready    INTEGER,
-    online_booking  INTEGER,             -- найден модуль бронирования
-    booking_engine  TEXT,                -- TravelLine / Bnovo / ...
+    online_booking  INTEGER,             -- 1 только для настоящей системы брони
+    booking_type    TEXT,                -- engine | request | none
+    booking_engine  TEXT,                -- TravelLine / Форма заявки / ...
     cms             TEXT,                -- Wix / uKit / Tilda / Bitrix ...
     copyright_year  INTEGER,
     load_ms         INTEGER,
@@ -130,6 +131,7 @@ MIGRATIONS = [
     ("hidden_reason", "TEXT DEFAULT ''"),
     ("previous_website", "TEXT DEFAULT ''"),
     ("website_manual", "INTEGER DEFAULT 0"),
+    ("booking_type", "TEXT DEFAULT ''"),
 ]
 
 
@@ -160,7 +162,7 @@ UPSERT_FIELDS = [
     "inn", "ogrn", "director", "okved", "registered_at",
     "phone", "phones", "telegram", "vk", "whatsapp", "email", "contact_source",
     "website", "final_url", "site_status", "http_code", "https", "mobile_ready",
-    "online_booking", "booking_engine", "cms", "copyright_year", "load_ms",
+    "online_booking", "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
     "domain_expires", "domain_age_days",
     "reason_code", "reason_text", "missing", "pitch", "score", "checked_at",
 ]

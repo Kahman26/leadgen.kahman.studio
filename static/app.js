@@ -92,6 +92,14 @@ function contactChips(l) {
                     : '<span class="chip off">нет контактов</span>';
 }
 
+// Как гость может забронировать: сам, через заявку или никак
+function bookingText(l) {
+  const how = l.booking_engine ? ` — ${esc(l.booking_engine)}` : '';
+  if (l.booking_type === 'engine') return `онлайн${how}`;
+  if (l.booking_type === 'request') return `только заявка${how}`;
+  return 'нет — только телефон';
+}
+
 function scoreClass(n) { return n >= CFG.hot ? 'hot' : n >= CFG.hot / 2 ? 'warm' : 'cold'; }
 
 async function loadLeads() {
@@ -134,7 +142,7 @@ async function openLead(id) {
                     blocked: 'закрыт защитой' }[l.site_status] || '—'],
     ['Код ответа', l.http_code ?? '—'],
     ['Мобильная версия', l.site_status === 'ok' ? (l.mobile_ready ? 'есть' : 'нет') : '—'],
-    ['Онлайн-бронь', l.site_status === 'ok' ? (l.online_booking ? (l.booking_engine || 'есть') : 'нет') : '—'],
+    ['Бронирование', l.site_status === 'ok' ? bookingText(l) : '—'],
     ['Движок', l.cms || '—'],
     ['Копирайт', l.copyright_year || '—'],
     ['Загрузка', l.load_ms ? l.load_ms + ' мс' : '—'],

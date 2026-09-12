@@ -101,6 +101,7 @@ def process_lead(lead, do_whois=False):
         "https": audit["https"],
         "mobile_ready": audit["mobile_ready"],
         "online_booking": audit["online_booking"],
+        "booking_type": audit["booking_type"],
         "booking_engine": audit["booking_engine"],
         "cms": audit["cms"],
         "copyright_year": audit["copyright_year"] or None,
@@ -220,7 +221,8 @@ def recheck_lead(lead_id, drop_site_contacts=False):
 
 
 AUDIT_FIELDS = ("site_status", "http_code", "https", "mobile_ready", "online_booking",
-                "booking_engine", "cms", "copyright_year", "load_ms", "final_url")
+                "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
+                "final_url")
 
 
 def rescore_all():
