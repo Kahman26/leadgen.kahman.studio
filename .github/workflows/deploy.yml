@@ -1,7 +1,7 @@
 name: Деплой на сервер
 
 # Пуш в main — и сервер обновляется сам.
-# Ручной запуск доступен во вкладке Actions (workflow_dispatch).
+# Ручной запуск доступен во вкладке Actions (кнопка Run workflow).
 on:
   push:
     branches: [main]
@@ -14,6 +14,12 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  # Адрес не секрет — он и так виден в DNS поддомена.
+  # Секретом хранится только приватный ключ: Settings → Secrets → DEPLOY_KEY.
+  DEPLOY_HOST: 130.49.146.66
+  DEPLOY_USER: root
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -23,16 +29,19 @@ jobs:
       - name: Подготовить SSH-ключ
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          install -m 600 /dev/null ~/.ssh/deploy_key
           echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Выполнить деплой
+        # Скрипт передаётся по stdin, а не запускается с сервера: так
+        # выполняется всегда свежая версия, и bash не читает файл,
+        # который git прямо сейчас переписывает.
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o IdentitiesOnly=yes \
               -o ConnectTimeout=20 \
-              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
               'bash -s' < deploy/deploy.sh
 
       - name: Убрать ключ

@@ -168,41 +168,79 @@ export DADATA_TOKEN=ваш_токен     # Linux
 
 ---
 
-## Развёртывание на сервере
+## Боевой сервер и автодеплой
+
+Работает на <https://leadgen.kahman.studio> под базовой авторизацией nginx.
+
+| Что | Где |
+|---|---|
+| Код | `/opt/leadgen` (git-репозиторий, ветка `main`) |
+| Окружение | `/opt/leadgen/venv` |
+| База лидов | `/var/lib/leadgen/leads.db` — **вне репозитория**, деплой её не трогает |
+| Кеш Overpass | `/opt/leadgen/.cache` |
+| Секреты | `/etc/leadgen.env` (там же `DADATA_TOKEN`) |
+| Сервис | `systemctl status leadgen`, логи — `journalctl -u leadgen -f` |
+| nginx | `/etc/nginx/sites-available/leadgen.kahman.studio` |
+| Пароль входа | `/etc/nginx/.htpasswd-leadgen` |
+
+Приложение слушает только `127.0.0.1:8765` — снаружи в него можно попасть
+исключительно через nginx, то есть только с паролем.
+
+### Как работает автодеплой
+
+```
+git push origin main
+   ↓
+GitHub Actions (.github/workflows/deploy.yml)
+   ↓  ssh root@сервер 'bash -s' < deploy/deploy.sh
+   ↓
+git fetch + reset --hard origin/main → pip install → systemctl restart leadgen
+```
+
+Скрипт деплоя передаётся по stdin, а не запускается с сервера: иначе bash читал бы
+файл, который git прямо в этот момент переписывает.
+
+`git reset --hard` затрагивает только отслеживаемые файлы, поэтому база,
+кеш и `venv` переживают деплой.
+
+Единственный секрет в GitHub — `DEPLOY_KEY`, приватный SSH-ключ для входа
+на сервер. Адрес сервера секретом не является и лежит в самом workflow.
+
+Деплой можно запустить и вручную: вкладка **Actions → Деплой на сервер → Run workflow**.
+
+### Первичная настройка с нуля
+
+Если сервер поднимается заново — всё делает один скрипт:
 
 ```bash
-git clone <репозиторий> /opt/leadgen && cd /opt/leadgen
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+bash deploy/bootstrap.sh
 ```
 
-`/etc/systemd/system/leadgen.service`:
+Он ставит пакеты, создаёт системного пользователя `leadgen`, клонирует репозиторий,
+собирает venv, генерирует пароль, выпускает сертификат Let's Encrypt и включает сервис.
+Повторный запуск безопасен.
 
-```ini
-[Unit]
-Description=Leadgen
-After=network.target
+### Ручные команды
 
-[Service]
-WorkingDirectory=/opt/leadgen
-Environment=DADATA_TOKEN=ваш_токен
-ExecStart=/opt/leadgen/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8765
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+```bash
+ssh root@130.49.146.66 'bash -s' < deploy/deploy.sh   # выкатить вручную
+ssh root@130.49.146.66 'journalctl -u leadgen -n 50'  # посмотреть логи
+ssh root@130.49.146.66 'systemctl restart leadgen'    # перезапустить
 ```
 
-Дальше nginx на 8765 — и обязательно закрыть доступ, иначе базу увидит кто угодно:
+Сменить пароль входа:
 
-```nginx
-location / {
-    auth_basic "Leadgen";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-    proxy_pass http://127.0.0.1:8765;
-}
+```bash
+htpasswd /etc/nginx/.htpasswd-leadgen kahman && systemctl reload nginx
 ```
 
-Своей авторизации в сервисе нет — она намеренно вынесена в nginx.
+Добавить токен Dadata:
+
+```bash
+echo 'DADATA_TOKEN=ваш_токен' > /etc/leadgen.env
+chmod 600 /etc/leadgen.env
+systemctl restart leadgen
+```
 
 ---
 
