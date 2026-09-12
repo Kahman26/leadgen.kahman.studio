@@ -81,9 +81,11 @@ def score_lead(lead, audit):
     problems = []          # коды найденных проблем
     missing = []           # чего не хватает, словами
 
-    # Ликвидированной компании сайт не нужен. Это не «плохой лид»,
-    # это вообще не лид — балл обнуляем, дальше можно не считать.
-    if (lead.get("org_status") or "") in ("LIQUIDATED", "BANKRUPT"):
+    # Ликвидированной компании сайт не нужен. Но обнулять лид можно только
+    # при уверенном совпадении: при неточном мы рискуем выбросить живой
+    # объект из-за ликвидированного однофамильца.
+    dead_org = (lead.get("org_status") or "") in ("LIQUIDATED", "BANKRUPT")
+    if dead_org and lead.get("dadata_confidence") == "high":
         when = lead.get("liquidated_at") or ""
         gaps = [f"Организация ликвидирована по ЕГРЮЛ{f' ({when})' if when else ''}"]
         if lead.get("org_name"):
@@ -144,6 +146,9 @@ def score_lead(lead, audit):
 
     if (lead.get("org_status") or "") == "LIQUIDATING":
         missing.append("По ЕГРЮЛ организация в стадии ликвидации")
+    elif dead_org:
+        missing.append(f"Возможно ликвидирована: в реестре {lead.get('org_name')} "
+                       f"числится закрытой, но совпадение неточное — проверьте")
 
     if not problems:
         problems.append("OK")

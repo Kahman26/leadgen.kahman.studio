@@ -69,9 +69,15 @@ def _ts_to_date(value):
 
 
 def _score_match(lead_name, lead_address, suggestion):
-    """Складывает независимые подтверждения. Возвращает (баллы, чем подтверждено)."""
+    """Складывает независимые подтверждения.
+
+    Возвращает (баллы, чем подтверждено, есть ли профильное подтверждение).
+    Совпадения названия и города мало: «Уралэлектромедь» так цепляется
+    к одноимённому заводу, а «Лайнер» — к любому ООО «Лайнер» в городе.
+    """
     data = suggestion.get("data") or {}
     points, why = 0, []
+    strong = False              # ОКВЭД из ниши или совпавший адрес
 
     a, b = norm_name(lead_name), norm_name(suggestion.get("value"))
     if a and b:
@@ -85,6 +91,7 @@ def _score_match(lead_name, lead_address, suggestion):
     okved = data.get("okved") or ""
     if okved.startswith(NICHE_OKVED):
         points += 2
+        strong = True
         why.append(f"ОКВЭД {okved} из ниши")
 
     addr = ((data.get("address") or {}).get("value")) or ""
@@ -92,12 +99,13 @@ def _score_match(lead_name, lead_address, suggestion):
         common = street_tokens(lead_address) & street_tokens(addr)
         if common:
             points += 3
+            strong = True
             why.append("адрес совпадает: " + ", ".join(sorted(common)))
     if "екатеринбург" in addr.lower():
         points += 1
         why.append("адрес в Екатеринбурге")
 
-    return points, why
+    return points, why, strong
 
 
 def _pack(suggestion, confidence, why):
@@ -162,7 +170,10 @@ def by_name(name, address="", token=None, region=None):
     }
     best, best_points, best_why = None, 0, []
     for suggestion in _post(SUGGEST_URL, body, token):
-        points, why = _score_match(name, address, suggestion)
+        points, why, strong = _score_match(name, address, suggestion)
+        # Без профильного подтверждения это просто однофамилец
+        if not strong:
+            continue
         if points > best_points:
             best, best_points, best_why = suggestion, points, why
 
