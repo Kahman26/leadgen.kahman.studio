@@ -16,6 +16,16 @@ cd "$APP_DIR"
 
 echo "→ Забираю изменения из origin/$BRANCH"
 sudo -u "$APP_USER" git fetch --prune origin
+
+# Если ветки на той стороне нет, --prune уже снёс локальную ссылку, и git
+# дальше падает с невнятным «ambiguous argument». Ловим это сами: почти
+# всегда причина в том, что в репозиторий ещё ни разу не пушили.
+if ! sudo -u "$APP_USER" git rev-parse --verify -q "origin/$BRANCH" >/dev/null; then
+    echo "✗ В origin нет ветки $BRANCH — деплоить нечего."
+    echo "  Похоже, в репозиторий ещё не было пуша. Код на сервере не тронут."
+    exit 1
+fi
+
 # reset --hard трогает только отслеживаемые файлы: кеш Overpass в .cache
 # и база в /var/lib/leadgen остаются на месте.
 sudo -u "$APP_USER" git reset --hard "origin/$BRANCH"
