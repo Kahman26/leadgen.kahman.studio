@@ -75,15 +75,30 @@ def merge_sources(osm_leads, dadata_leads):
 
 # ── проверка одного лида ─────────────────────────────────────────────────────
 
+EGRUL_FIELDS = ("inn", "ogrn", "org_name", "org_status", "org_status_text",
+                "director", "director_post", "okved", "legal_address",
+                "registered_at", "liquidated_at", "employee_count",
+                "dadata_confidence", "dadata_match")
+
+
 def enrich_from_egrul(lead):
     """Подтягивает данные ЕГРЮЛ. Молча пропускает, если совпадение неуверенное."""
+    # По ИНН уточняем только тот, которому уже доверяли. Иначе получится
+    # замкнутый круг: однажды ошибочно подобранный ИНН сам себя подтвердит.
+    trusted_inn = lead.get("inn") if lead.get("dadata_confidence") == "high" else ""
+
     try:
-        found = (dadata_lookup.by_inn(lead["inn"]) if lead.get("inn")
+        found = (dadata_lookup.by_inn(trusted_inn) if trusted_inn
                  else dadata_lookup.by_name(lead.get("name", ""), lead.get("address") or ""))
     except PermissionError:
         raise
     except Exception:
-        return False                       # сеть или лимит — лид всё равно нужен
+        return False                       # сеть или лимит — прежние данные не трогаем
+
+    # Запрос прошёл. Если уверенного совпадения нет, старые реквизиты надо
+    # убрать: иначе ошибка прошлого прогона останется в базе навсегда.
+    for field in EGRUL_FIELDS:
+        lead[field] = None if field == "employee_count" else ""
 
     if not found:
         return False
