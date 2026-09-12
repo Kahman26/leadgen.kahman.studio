@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Вход — Сборщик лидов</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .loginbox {
+      width: 100%;
+      max-width: 360px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px 26px;
+    }
+    .loginbox h1 { font-size: 19px; margin: 0 0 4px; letter-spacing: -.02em; }
+    .loginbox .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .loginbox label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+    .loginbox input { width: 100%; margin-bottom: 14px; padding: 9px 11px; }
+    .loginbox button { width: 100%; padding: 10px; font-weight: 560; }
+    .err {
+      display: none;
+      background: #fef3f2; border: 1px solid #fda29b; color: #b42318;
+      padding: 9px 11px; border-radius: 8px; font-size: 13px; margin-bottom: 14px;
+    }
+    .err.on { display: block; }
+    @media (prefers-color-scheme: dark) {
+      .err { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
+    }
+  </style>
+</head>
+<body>
+
+<form class="loginbox" id="form">
+  <h1>Сборщик лидов</h1>
+  <div class="sub">Екатеринбург · ниша бронирования</div>
+
+  <div class="err" id="err"></div>
+
+  <label for="login">Логин</label>
+  <input type="text" id="login" name="login" autocomplete="username" autofocus required>
+
+  <label for="password">Пароль</label>
+  <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+  <button type="submit" class="primary" id="submit">Войти</button>
+</form>
+
+<script>
+  const form = document.getElementById('form');
+  const err = document.getElementById('err');
+  const submit = document.getElementById('submit');
+
+  function showError(text) {
+    err.textContent = text;
+    err.classList.add('on');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.classList.remove('on');
+    submit.disabled = true;
+    submit.textContent = 'Проверяю…';
+
+    try {
+      const r = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: document.getElementById('login').value,
+          password: document.getElementById('password').value,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.ok) {
+        // Возвращаемся туда, откуда нас развернули на вход
+        const next = new URLSearchParams(location.search).get('next');
+        location.href = (next && next.startsWith('/')) ? next : '/';
+        return;
+      }
+      showError(data.error || 'Не удалось войти');
+    } catch (ex) {
+      showError('Сервер не отвечает');
+    }
+
+    submit.disabled = false;
+    submit.textContent = 'Войти';
+    document.getElementById('password').value = '';
+    document.getElementById('password').focus();
+  });
+</script>
+
+</body>
+</html>

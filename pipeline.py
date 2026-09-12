@@ -186,6 +186,39 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True):
             _state["running"] = False
 
 
+def recheck_lead(lead_id, drop_site_contacts=False):
+    """Перепроверяет один лид по текущему адресу сайта и пересчитывает балл.
+
+    `drop_site_contacts` нужен после смены домена: контакты, снятые со
+    старого сайта, к новому отношения не имеют, а из OSM и ЕГРЮЛ — имеют.
+    """
+    c = db.conn()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        return None
+
+    lead = db.row_to_dict(row)
+
+    if drop_site_contacts:
+        src = dict(lead.get("contact_source") or {})
+        for field in ("phone", "telegram", "vk", "whatsapp", "email"):
+            if src.get(field) == "сайт":
+                lead[field] = ""
+                src.pop(field, None)
+        lead["contact_source"] = src
+        lead["phones"] = []
+
+    processed = process_lead(lead)
+
+    fields = [f for f in db.UPSERT_FIELDS if f in processed]
+    sets = ", ".join(f"{f}=?" for f in fields)
+    c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
+              [processed[f] for f in fields] + [db.now(), lead_id])
+    c.commit()
+
+    return db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone())
+
+
 AUDIT_FIELDS = ("site_status", "http_code", "https", "mobile_ready", "online_booking",
                 "booking_engine", "cms", "copyright_year", "load_ms", "final_url")
 

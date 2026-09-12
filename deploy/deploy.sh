@@ -11,6 +11,7 @@ set -euo pipefail
 APP_DIR=/opt/leadgen
 APP_USER=leadgen
 BRANCH=main
+DOMAIN=leadgen.kahman.studio
 
 cd "$APP_DIR"
 
@@ -33,6 +34,28 @@ sudo -u "$APP_USER" git reset --hard "origin/$BRANCH"
 echo "→ Зависимости"
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -q --upgrade pip
 sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -q -r requirements.txt
+
+echo "→ Конфиг nginx"
+# Конфиг едет вместе с кодом: вход переехал внутрь приложения, и если
+# обновить только код, перед новой формой остался бы старый auth_basic.
+NGINX_SRC="$APP_DIR/deploy/nginx-leadgen.conf"
+NGINX_DST="/etc/nginx/sites-available/$DOMAIN"
+if [ -f "$NGINX_SRC" ] && ! cmp -s "$NGINX_SRC" "$NGINX_DST"; then
+    cp "$NGINX_DST" "/tmp/nginx-$DOMAIN.bak"
+    cp "$NGINX_SRC" "$NGINX_DST"
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+        echo "  nginx обновлён"
+    else
+        # Ломать чужие сайты на этом же nginx нельзя ни при каких условиях
+        cp "/tmp/nginx-$DOMAIN.bak" "$NGINX_DST"
+        echo "✗ Новый конфиг nginx не прошёл проверку, вернул прежний:"
+        nginx -t || true
+        exit 1
+    fi
+else
+    echo "  без изменений"
+fi
 
 echo "→ Перезапуск"
 systemctl restart leadgen

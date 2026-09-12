@@ -14,6 +14,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
 
 async function api(url, opts) {
   const r = await fetch(url, opts);
+  if (r.status === 401) {
+    // Сессия кончилась — возвращаем на вход, а не показываем ошибку
+    location.href = '/login?next=' + encodeURIComponent(location.pathname);
+    throw new Error('Требуется вход');
+  }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
@@ -27,6 +32,7 @@ function params(extra = {}) {
   if ($('fCategory').value) p.set('category', $('fCategory').value);
   if ($('fStatus').value) p.set('status', $('fStatus').value);
   if ($('fHas').value) p.set('has', $('fHas').value);
+  if ($('fHidden').value) p.set('hidden', $('fHidden').value);
   p.set('sort', $('fSort').value);
   if (statFilter) Object.entries(statFilter).forEach(([k, v]) => p.set(k, v));
   Object.entries(extra).forEach(([k, v]) => p.set(k, v));
@@ -42,6 +48,7 @@ async function loadStats() {
     { n: s.total, t: 'Всего в базе', f: null },
     { n: s.hot, t: `Горячих (балл ≥ ${CFG.hot})`, f: null },
     { n: s.with_contact, t: 'С контактами', f: { has: 'contact' } },
+    { n: s.hidden || 0, t: 'Скрытые', f: { hidden: 'only' } },
   ];
   for (const [code, n] of Object.entries(s.by_reason)) {
     if (code === '—') continue;
@@ -57,7 +64,7 @@ async function loadStats() {
   [...$('stats').children].forEach((el, i) => el.onclick = () => {
     const f = cards[i].f;
     statFilter = (JSON.stringify(f) === JSON.stringify(statFilter)) ? null : f;
-    if (statFilter) { $('fReason').value = ''; $('fHas').value = ''; }
+    if (statFilter) { $('fReason').value = ''; $('fHas').value = ''; $('fHidden').value = ''; }
     offset = 0; loadStats(); loadLeads();
   });
 
@@ -91,7 +98,7 @@ async function loadLeads() {
   total = data.total;
 
   $('rows').innerHTML = data.items.map((l) => `
-    <tr data-id="${l.id}">
+    <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden' : ''}">
       <td>
         <div class="name">${esc(l.name)}</div>
         <div class="sub">${esc(l.category || '')}${l.address ? ' · ' + esc(l.address) : ''}</div>
@@ -172,6 +179,24 @@ async function openLead(id) {
     <div class="section">
       <h3>Сайт и техника</h3>
       <dl class="kv">${tech.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+
+      <div class="siteedit">
+        <input type="text" id="siteInput" placeholder="Новый адрес сайта"
+               value="${esc(l.website || '')}">
+        <button id="saveSite">Сохранить</button>
+      </div>
+      <div class="muted" style="margin-top:6px;font-size:12px">
+        Компания могла сменить домен — впишите рабочий адрес,
+        и лид сразу перепроверится.
+      </div>
+
+      ${l.previous_website ? `
+        <div class="wasurl">Было:
+          <a href="${esc(l.previous_website)}" target="_blank" rel="noopener">${esc(l.previous_website)}</a>
+        </div>` : ''}
+
+      <button id="recheck" style="margin-top:10px">Перепроверить сайт</button>
+      <span class="muted" id="siteMsg"></span>
     </div>
 
     ${req.length ? `<div class="section"><h3>Реквизиты</h3>
@@ -197,6 +222,23 @@ async function openLead(id) {
       <textarea id="noteBox" placeholder="Что сказали, когда перезвонить…">${esc(l.note || '')}</textarea>
       <button id="saveNote" style="margin-top:8px">Сохранить заметку</button>
       <span class="muted" id="noteSaved"></span>
+    </div>
+
+    <div class="dangerzone">
+      ${l.hidden ? `
+        <div class="hiddenbanner">
+          Лид скрыт${l.hidden_reason ? `: ${esc(l.hidden_reason)}` : ''}.
+          В общем списке он не показывается.
+        </div>
+        <button id="unhide" style="margin-top:10px">Вернуть в список</button>
+      ` : `
+        <input type="text" id="hideReason" placeholder="Причина: закрылись, не профиль…"
+               style="width:100%;margin-bottom:8px">
+        <button id="hide" class="danger">Скрыть из списка</button>
+        <div class="muted" style="margin-top:6px;font-size:12px">
+          Данные останутся в базе — лид просто перестанет попадаться в работе.
+        </div>
+      `}
     </div>`;
 
   $('drawer').querySelectorAll('[data-st]').forEach((b) => b.onclick = async () => {
@@ -217,6 +259,62 @@ async function openLead(id) {
     $('noteSaved').textContent = ' сохранено';
     setTimeout(() => ($('noteSaved').textContent = ''), 1500);
   };
+
+  // ── смена адреса сайта и перепроверка ──────────────────────────────────
+  const msg = (text) => { $('siteMsg').textContent = ' ' + text; };
+
+  $('saveSite').onclick = async () => {
+    const value = $('siteInput').value.trim();
+    if (value === (l.website || '')) return msg('адрес не изменился');
+    $('saveSite').disabled = true;
+    msg('проверяю сайт…');
+    try {
+      await api(`/api/lead/${id}/website`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ website: value }),
+      });
+      await openLead(id);          // перерисовываем карточку свежими данными
+      loadLeads(); loadStats();
+    } catch (e) {
+      msg(e.message);
+      $('saveSite').disabled = false;
+    }
+  };
+
+  $('recheck').onclick = async () => {
+    $('recheck').disabled = true;
+    msg('проверяю…');
+    try {
+      await api(`/api/lead/${id}/recheck`, { method: 'POST' });
+      await openLead(id);
+      loadLeads(); loadStats();
+    } catch (e) {
+      msg(e.message);
+      $('recheck').disabled = false;
+    }
+  };
+
+  // ── скрыть / вернуть ───────────────────────────────────────────────────
+  const setHidden = async (hidden, reason) => {
+    await api('/api/lead/' + id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hidden, hidden_reason: reason || '' }),
+    });
+    loadLeads(); loadStats();
+  };
+
+  if ($('hide')) {
+    $('hide').onclick = async () => {
+      await setHidden(1, $('hideReason').value.trim());
+      closeLead();
+    };
+  }
+  if ($('unhide')) {
+    $('unhide').onclick = async () => {
+      await setHidden(0, '');
+      await openLead(id);
+    };
+  }
 
   $('drawer').classList.add('on');
   $('overlay').classList.add('on');
@@ -261,6 +359,7 @@ function startPolling() {
 async function init() {
   CFG = await api('/api/config');
   $('cityLabel').textContent = CFG.city + ' · ниша бронирования';
+  $('who').textContent = CFG.login || '';
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
@@ -273,7 +372,8 @@ async function init() {
   const rerun = () => { offset = 0; statFilter = null; loadLeads(); loadStats(); };
   let t;
   $('q').oninput = () => { clearTimeout(t); t = setTimeout(rerun, 300); };
-  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fSort'].forEach((id) => $(id).onchange = rerun);
+  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fHidden', 'fSort']
+    .forEach((id) => $(id).onchange = rerun);
 
   $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadLeads(); };
   $('next').onclick = () => { offset += PAGE; loadLeads(); };
@@ -281,6 +381,11 @@ async function init() {
   document.onkeydown = (e) => { if (e.key === 'Escape') closeLead(); };
 
   $('btnExport').onclick = () => { location.href = '/api/export.csv?' + params(); };
+
+  $('btnLogout').onclick = async () => {
+    await fetch('/logout', { method: 'POST' });
+    location.href = '/login';
+  };
 
   $('btnRun').onclick = () => $('runDialog').showModal();
   $('runCancel').onclick = () => $('runDialog').close();

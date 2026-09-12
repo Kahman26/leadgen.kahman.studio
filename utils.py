@@ -25,6 +25,17 @@ def split_phones(raw):
     return out
 
 
+def looks_like_url(value):
+    """Грубая проверка перед сохранением адреса, введённого руками."""
+    value = (value or "").strip()
+    if not value or " " in value:
+        return False
+    host = urlsplit(value if "//" in value else "http://" + value).hostname or ""
+    # Домен как минимум из двух частей, вторая — не цифры
+    parts = host.split(".")
+    return len(parts) >= 2 and all(parts) and len(parts[-1]) >= 2
+
+
 def decode_idna(url):
     """Возвращает URL с доменом в читаемом виде: xn--80a… → кириллица.
 

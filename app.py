@@ -3,19 +3,88 @@
 
 import csv
 import io
+from urllib.parse import quote
 
-from fastapi import FastAPI, Body, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, Body, HTTPException, Request, Response, UploadFile, File
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
+import auth
 import config
 import db
 import utils
 import pipeline
 import scoring
 
-app = FastAPI(title="Сборщик лидов — ниша бронирования")
+app = FastAPI(title="Сборщик лидов — ниша бронирования", docs_url=None, redoc_url=None)
 db.init()
+auth.cleanup_sessions()
+
+# Сюда пускаем без входа: сама форма логина, её стили и ответ поисковикам.
+PUBLIC_PATHS = {"/login", "/robots.txt", "/favicon.ico"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith("/static/"):
+        return await call_next(request)
+
+    login = auth.session_login(request.cookies.get(auth.COOKIE_NAME))
+    if not login:
+        # Фоновым запросам нужен код, а не HTML формы входа,
+        # иначе интерфейс покажет разметку вместо данных.
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Требуется вход"}, status_code=401)
+        return RedirectResponse(f"/login?next={quote(path)}", status_code=302)
+
+    request.state.login = login
+    return await call_next(request)
+
+
+# ── вход и выход ─────────────────────────────────────────────────────────────
+
+@app.get("/login")
+def login_page(request: Request):
+    # Уже вошедшего незачем держать на форме
+    if auth.session_login(request.cookies.get(auth.COOKIE_NAME)):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(config.BASE_DIR / "static" / "login.html")
+
+
+@app.post("/login")
+def login(request: Request, payload: dict = Body(...)):
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    user, error = auth.authenticate(payload.get("login"), payload.get("password"), ip)
+    if error:
+        return JSONResponse({"ok": False, "error": error}, status_code=401)
+
+    token = auth.create_session(user, request.headers.get("user-agent", ""))
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        auth.COOKIE_NAME, token,
+        max_age=auth.SESSION_DAYS * 24 * 3600,
+        httponly=True,                       # из JavaScript куку не достать
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout")
+def logout(request: Request):
+    auth.drop_session(request.cookies.get(auth.COOKIE_NAME))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/robots.txt")
+def robots():
+    """Полный запрет обхода: сервис не должен попадать в поисковую выдачу."""
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
 STATUSES = {
     "new": "Новый",
@@ -34,20 +103,28 @@ SORTS = {
 
 
 @app.get("/api/config")
-def get_config():
+def get_config(request: Request):
     return {
         "city": config.CITY_NAME,
         "statuses": STATUSES,
         "reasons": {k: v[0] for k, v in scoring.REASONS.items()},
         "dadata_ready": bool(config.DADATA_TOKEN),
         "hot": scoring.HOT,
+        "login": getattr(request.state, "login", ""),
     }
 
 
 # ── выборка лидов ────────────────────────────────────────────────────────────
 
-def _where(reason, status, category, q, has, source):
+def _where(reason, status, category, q, has, source, hidden=""):
     sql, params = [], []
+
+    # По умолчанию скрытые не показываем: их убрали именно чтобы не мешали.
+    if hidden == "only":
+        sql.append("hidden = 1")
+    elif hidden != "all":
+        sql.append("COALESCE(hidden, 0) = 0")
+
     if reason:
         sql.append("reason_code = ?")
         params.append(reason)
@@ -80,9 +157,9 @@ def _where(reason, status, category, q, has, source):
 
 @app.get("/api/leads")
 def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "",
-              has: str = "", source: str = "", sort: str = "score",
+              has: str = "", source: str = "", hidden: str = "", sort: str = "score",
               limit: int = 100, offset: int = 0):
-    where, params = _where(reason, status, category, q, has, source)
+    where, params = _where(reason, status, category, q, has, source, hidden)
     order = SORTS.get(sort, SORTS["score"])
     c = db.conn()
     total = c.execute(f"SELECT COUNT(*) n FROM leads {where}", params).fetchone()["n"]
@@ -97,21 +174,28 @@ def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "
 def get_stats():
     c = db.conn()
 
+    # Везде считаем только видимые: скрытые убраны намеренно
+    # и не должны раздувать цифры на карточках.
+    visible = "COALESCE(hidden, 0) = 0"
+
     def group(field):
         return {r[field] or "—": r["n"] for r in c.execute(
-            f"SELECT {field}, COUNT(*) n FROM leads GROUP BY {field} ORDER BY n DESC")}
+            f"SELECT {field}, COUNT(*) n FROM leads WHERE {visible} "
+            f"GROUP BY {field} ORDER BY n DESC")}
 
-    total = c.execute("SELECT COUNT(*) n FROM leads").fetchone()["n"]
+    total = c.execute(f"SELECT COUNT(*) n FROM leads WHERE {visible}").fetchone()["n"]
     with_contact = c.execute(
-        "SELECT COUNT(*) n FROM leads WHERE COALESCE(phone,'') <> '' "
-        "OR COALESCE(telegram,'') <> '' OR COALESCE(vk,'') <> ''").fetchone()["n"]
-    hot = c.execute("SELECT COUNT(*) n FROM leads WHERE score >= ?",
+        f"SELECT COUNT(*) n FROM leads WHERE {visible} AND (COALESCE(phone,'') <> '' "
+        "OR COALESCE(telegram,'') <> '' OR COALESCE(vk,'') <> '')").fetchone()["n"]
+    hot = c.execute(f"SELECT COUNT(*) n FROM leads WHERE {visible} AND score >= ?",
                     (scoring.HOT,)).fetchone()["n"]
+    hidden_count = c.execute("SELECT COUNT(*) n FROM leads WHERE hidden = 1").fetchone()["n"]
 
     return {
         "total": total,
         "with_contact": with_contact,
         "hot": hot,
+        "hidden": hidden_count,
         "by_reason": group("reason_code"),
         "by_status": group("status"),
         "by_category": group("category"),
@@ -131,7 +215,10 @@ def get_lead(lead_id: int):
 
 @app.post("/api/lead/{lead_id}")
 def update_lead(lead_id: int, payload: dict = Body(...)):
-    fields = {k: v for k, v in payload.items() if k in ("status", "note")}
+    fields = {k: v for k, v in payload.items()
+              if k in ("status", "note", "hidden", "hidden_reason")}
+    if "hidden" in fields:
+        fields["hidden"] = 1 if fields["hidden"] else 0
     if not fields:
         raise HTTPException(400, "Нечего обновлять")
     if "status" in fields and fields["status"] not in STATUSES:
@@ -142,6 +229,46 @@ def update_lead(lead_id: int, payload: dict = Body(...)):
               list(fields.values()) + [db.now(), lead_id])
     c.commit()
     return {"ok": True}
+
+
+@app.post("/api/lead/{lead_id}/website")
+def change_website(lead_id: int, payload: dict = Body(...)):
+    """Ставит новый адрес сайта, помнит старый и сразу перепроверяет лид."""
+    c = db.conn()
+    row = c.execute("SELECT website, previous_website FROM leads WHERE id=?",
+                    (lead_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Лид не найден")
+
+    new = utils.decode_idna((payload.get("website") or "").strip())
+    old = (row["website"] or "").strip()
+
+    if new == old:
+        raise HTTPException(400, "Это тот же адрес")
+    if new and not utils.looks_like_url(new):
+        raise HTTPException(400, "Не похоже на адрес сайта")
+
+    # Старый адрес не затираем пустым: если сайт убрали совсем,
+    # прежняя ссылка всё равно пригодится для истории.
+    previous = old or (row["previous_website"] or "")
+
+    c.execute(
+        "UPDATE leads SET website=?, previous_website=?, website_manual=?, updated_at=? "
+        "WHERE id=?",
+        (new, previous, 1, db.now(), lead_id),
+    )
+    c.commit()
+
+    return pipeline.recheck_lead(lead_id, drop_site_contacts=True)
+
+
+@app.post("/api/lead/{lead_id}/recheck")
+def recheck(lead_id: int):
+    """Перепроверить сайт лида, ничего не меняя в адресе."""
+    lead = pipeline.recheck_lead(lead_id)
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    return lead
 
 
 # ── запуск сбора ─────────────────────────────────────────────────────────────
@@ -187,8 +314,8 @@ EXPORT_COLUMNS = [
 
 @app.get("/api/export.csv")
 def export_csv(reason: str = "", status: str = "", category: str = "",
-               q: str = "", has: str = "", source: str = ""):
-    where, params = _where(reason, status, category, q, has, source)
+               q: str = "", has: str = "", source: str = "", hidden: str = ""):
+    where, params = _where(reason, status, category, q, has, source, hidden)
     rows = db.conn().execute(
         f"SELECT * FROM leads {where} ORDER BY score DESC", params).fetchall()
 

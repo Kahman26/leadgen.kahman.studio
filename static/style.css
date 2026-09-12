@@ -6,6 +6,7 @@
   --line: #e4e7ec;
   --accent: #2f5bea;
   --accent-soft: #eaf0ff;
+  --link: #1a47c7;
   --hot: #d92d20;
   --warm: #dc6803;
   --cold: #667085;
@@ -23,6 +24,7 @@
     --line: #272c34;
     --accent: #6d8dff;
     --accent-soft: #1c2436;
+    --link: #8fb4ff;
     --hot: #ff6b5e;
     --warm: #f5a524;
     --cold: #8b95a5;
@@ -32,6 +34,11 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Ссылки без класса раньше брали цвет браузера по умолчанию — тёмно-синий,
+   который на тёмном фоне почти не читался. */
+a { color: var(--link); text-decoration: none; overflow-wrap: anywhere; }
+a:hover { text-decoration: underline; }
 
 body {
   margin: 0;
@@ -80,7 +87,10 @@ button.primary:hover { filter: brightness(1.07); }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 10px 12px; margin-bottom: 14px; box-shadow: var(--shadow);
 }
-input[type=text], input[type=search], select, textarea {
+/* Перечислять типы по одному нельзя: забытый type=password остаётся
+   с белым фоном браузера и на тёмной теме светится. */
+input:not([type=checkbox]):not([type=radio]):not([type=file]),
+select, textarea {
   font: inherit; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
 }
@@ -186,3 +196,33 @@ textarea { width: 100%; min-height: 80px; resize: vertical; }
 dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); padding: 20px; max-width: 460px; }
 dialog::backdrop { background: rgba(16,24,40,.4); }
 label.row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+/* ── правка адреса сайта в карточке ─────────────────────────────────────── */
+.siteedit { display: flex; gap: 6px; margin-top: 8px; }
+.siteedit input { flex: 1; min-width: 0; }
+.wasurl {
+  margin-top: 8px; font-size: 12px; color: var(--muted);
+  padding: 7px 9px; background: var(--bg); border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+.wasurl a { color: var(--muted); text-decoration: line-through; }
+.wasurl a:hover { color: var(--link); }
+
+/* ── скрытые лиды ───────────────────────────────────────────────────────── */
+.dangerzone {
+  margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line);
+}
+button.danger { border-color: var(--hot); color: var(--hot); }
+button.danger:hover { background: var(--hot); border-color: var(--hot); color: #fff; }
+
+.hiddenbanner {
+  background: var(--bg); border: 1px dashed var(--line); border-radius: 8px;
+  padding: 10px 12px; margin-top: 12px; font-size: 13px; color: var(--muted);
+}
+tbody tr.is-hidden td { opacity: .55; }
+tbody tr.is-hidden .name::after {
+  content: " · скрыт"; color: var(--muted); font-weight: 400; font-size: 12px;
+}
+
+/* ── кто вошёл ──────────────────────────────────────────────────────────── */
+header .who { color: var(--muted); font-size: 13px; }

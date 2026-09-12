@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
   <title>Сборщик лидов — ниша бронирования</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -12,6 +13,8 @@
   <h1>Сборщик лидов</h1>
   <span class="city" id="cityLabel">—</span>
   <span class="spacer"></span>
+  <span class="who" id="who"></span>
+  <button id="btnLogout">Выйти</button>
   <button id="btnImport">Импорт CSV</button>
   <button id="btnExport">Выгрузить в CSV</button>
   <button id="btnRun" class="primary">Запустить сбор</button>
@@ -39,6 +42,11 @@
       <option value="telegram">Есть Telegram</option>
       <option value="vk">Есть ВКонтакте</option>
       <option value="none">Контактов нет</option>
+    </select>
+    <select id="fHidden">
+      <option value="">Скрытые: не показывать</option>
+      <option value="only">Только скрытые</option>
+      <option value="all">Показывать вместе со всеми</option>
     </select>
     <select id="fSort">
       <option value="score">Сортировать: по баллу</option>
