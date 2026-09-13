@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS leads (
     -- работа маркетолога
     status          TEXT DEFAULT 'new',  -- new | in_work | contacted | refused | deal
     note            TEXT DEFAULT '',
+    priority        INTEGER,             -- оценка 1–10, которую ставит человек
     hidden          INTEGER DEFAULT 0,   -- убран из списка (закрылись и т.п.)
     hidden_reason   TEXT DEFAULT '',
 
@@ -132,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_reason ON leads(reason_code);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
 CREATE INDEX IF NOT EXISTS idx_leads_hidden ON leads(hidden);
 CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(org_status);
+CREATE INDEX IF NOT EXISTS idx_leads_priority ON leads(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 """
 
@@ -153,6 +155,7 @@ MIGRATIONS = [
     ("dadata_confidence", "TEXT DEFAULT ''"),
     ("dadata_match", "TEXT DEFAULT ''"),
     ("manual_fields", "TEXT DEFAULT ''"),
+    ("priority", "INTEGER"),
 ]
 
 

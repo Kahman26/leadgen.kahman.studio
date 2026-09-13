@@ -114,9 +114,11 @@ th {
 }
 td { padding: 8px 9px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 
-/* Колонки, кроме названия, живут по содержимому и не растягиваются */
+/* Колонки, кроме названия, живут по содержимому и не растягиваются.
+   Порядок: 1 объект, 2 признак, 3 мой приоритет, 4 балл, 5 контакты,
+   6 сайт, 7 статус — при добавлении колонки номера надо править здесь. */
 th.num, td.num { width: 1%; text-align: right; }
-td:nth-child(2), td:nth-child(5), td:nth-child(6) { width: 1%; white-space: nowrap; }
+td:nth-child(2), td:nth-child(6), td:nth-child(7) { width: 1%; white-space: nowrap; }
 
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--accent-soft); }
@@ -302,4 +304,19 @@ dialog .err.on { display: block; }
 .side .err.on { display: block; }
 @media (prefers-color-scheme: dark) {
   .side .err { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
+}
+
+/* ── моя оценка приоритета ──────────────────────────────────────────────── */
+.prios { display: flex; gap: 4px; flex-wrap: wrap; }
+.prios button {
+  min-width: 30px; padding: 5px 0; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.prios button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.prios .prio-clear { color: var(--muted); }
+
+.prio {
+  display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 6px;
+  background: var(--accent); color: #fff; font-weight: 650;
+  font-variant-numeric: tabular-nums; font-size: 12px;
 }

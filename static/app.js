@@ -120,6 +120,9 @@ async function loadLeads() {
         <div class="sub">${esc(l.category || '')}${l.address ? ' · ' + esc(l.address) : ''}</div>
       </td>
       <td><span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span></td>
+      <td class="num">${l.priority
+            ? `<span class="prio">${l.priority}</span>`
+            : '<span class="muted">—</span>'}</td>
       <td class="num"><span class="score ${scoreClass(l.score)}">${l.score}</span></td>
       <td>${contactChips(l)}</td>
       <td>${l.website
@@ -200,6 +203,15 @@ async function openLead(id) {
         Сбор эти поля не перезаписывает.
         <button class="linkbtn" id="unlockLead">Вернуть автозаполнение</button>
       </div>` : ''}
+
+    <div class="section">
+      <h3>Мой приоритет <span class="muted" style="text-transform:none">— кому звонить раньше</span></h3>
+      <div class="prios">
+        ${[1,2,3,4,5,6,7,8,9,10].map((n) => `<button data-prio="${n}"
+           class="${l.priority === n ? 'on' : ''}">${n}</button>`).join('')}
+        <button data-prio="" class="prio-clear" title="Снять оценку">—</button>
+      </div>
+    </div>
 
     <div class="section">
       <h3>С чего начать разговор</h3>
@@ -311,6 +323,17 @@ async function openLead(id) {
     $('noteSaved').textContent = ' сохранено';
     setTimeout(() => ($('noteSaved').textContent = ''), 1500);
   };
+
+  $('drawer').querySelectorAll('[data-prio]').forEach((b) => b.onclick = async () => {
+    const value = b.dataset.prio === '' ? null : Number(b.dataset.prio);
+    await api('/api/lead/' + id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: value }),
+    });
+    $('drawer').querySelectorAll('[data-prio]').forEach((x) => x.classList.remove('on'));
+    if (value) b.classList.add('on');
+    loadLeads();
+  });
 
   $('editLead').onclick = () => openEditor(l);
 

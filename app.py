@@ -97,6 +97,8 @@ STATUSES = {
 
 SORTS = {
     "score": "score DESC, id DESC",
+    # Неоценённые уходят в конец: COALESCE вместо NULL, иначе порядок неочевиден
+    "priority": "COALESCE(priority, 0) DESC, score DESC, id DESC",
     "name": "name COLLATE NOCASE ASC",
     "new": "id DESC",
     "checked": "checked_at DESC",
@@ -234,9 +236,21 @@ def get_lead(lead_id: int):
 @app.post("/api/lead/{lead_id}")
 def update_lead(lead_id: int, payload: dict = Body(...)):
     fields = {k: v for k, v in payload.items()
-              if k in ("status", "note", "hidden", "hidden_reason")}
+              if k in ("status", "note", "hidden", "hidden_reason", "priority")}
     if "hidden" in fields:
         fields["hidden"] = 1 if fields["hidden"] else 0
+    if "priority" in fields:
+        value = fields["priority"]
+        if value in ("", None):
+            fields["priority"] = None            # оценку сняли
+        else:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Приоритет — число от 1 до 10")
+            if not 1 <= value <= 10:
+                raise HTTPException(400, "Приоритет — число от 1 до 10")
+            fields["priority"] = value
     if not fields:
         raise HTTPException(400, "Нечего обновлять")
     if "status" in fields and fields["status"] not in STATUSES:
@@ -502,7 +516,7 @@ def rescore():
 
 EXPORT_COLUMNS = [
     ("name", "Название"), ("category", "Категория"), ("reason_text", "Признак"),
-    ("score", "Балл"), ("phone", "Телефон"), ("telegram", "Telegram"),
+    ("priority", "Мой приоритет"), ("score", "Балл"), ("phone", "Телефон"), ("telegram", "Telegram"),
     ("vk", "ВКонтакте"), ("whatsapp", "WhatsApp"), ("email", "Почта"),
     ("website", "Сайт"), ("address", "Адрес"), ("missing", "Чего не хватает"),
     ("pitch", "С чего начать разговор"), ("source_detail", "Откуда лид"),
@@ -517,10 +531,12 @@ EXPORT_COLUMNS = [
 @app.get("/api/export.csv")
 def export_csv(reason: str = "", status: str = "", category: str = "",
                q: str = "", has: str = "", source: str = "", hidden: str = "",
-               org: str = ""):
+               org: str = "", sort: str = "score"):
     where, params = _where(reason, status, category, q, has, source, hidden, org)
+    # Тот же порядок, что и на экране: иначе выгрузка не совпадёт со списком
+    order = SORTS.get(sort, SORTS["score"])
     rows = db.conn().execute(
-        f"SELECT * FROM leads {where} ORDER BY score DESC", params).fetchall()
+        f"SELECT * FROM leads {where} ORDER BY {order}", params).fetchall()
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";", quoting=csv.QUOTE_MINIMAL)
