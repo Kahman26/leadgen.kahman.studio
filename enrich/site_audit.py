@@ -114,6 +114,20 @@ CONTACT_PATHS = ["/contacts", "/kontakty", "/contact"]
 CONTACT_TIMEOUT = 8
 
 
+def decode_body(response):
+    """Возвращает текст ответа с правильной кодировкой.
+
+    Для text/html без указанной кодировки requests по стандарту берёт
+    ISO-8859-1, и русский текст превращается в крякозябры. На таком HTML
+    не находятся ни «забронировать», ни «дата заезда» — проверка молча
+    считает, что бронирования нет.
+    """
+    ctype = (response.headers.get("content-type") or "").lower()
+    if "charset=" not in ctype:
+        response.encoding = response.apparent_encoding or response.encoding
+    return response.text or ""
+
+
 def normalize_url(url):
     url = (url or "").strip()
     if not url:
@@ -364,14 +378,14 @@ def audit(url):
     if resp.status_code >= 400:
         return res                          # 404/5xx — сайт действительно не работает
 
-    html = resp.text or ""
+    html = decode_body(resp)
 
     # Страница могла оказаться заглушкой, которая ставит cookie и перезагружается
     if _is_cookie_challenge(html):
         retried = _solve_cookie_challenge(sess, resp)
         if retried is not None and retried.status_code < 400:
             resp = retried
-            html = resp.text or ""
+            html = decode_body(resp)
             res["http_code"] = resp.status_code
             res["final_url"] = utils.decode_idna(resp.url)
 
@@ -414,11 +428,12 @@ def audit(url):
                 time.sleep(config.CRAWL_DELAY)
                 r2 = sess.get(target, timeout=CONTACT_TIMEOUT)
                 if r2.status_code == 200:
+                    body2 = decode_body(r2)
                     try:
-                        t2 = BeautifulSoup(r2.text, "lxml").get_text(" ", strip=True)
+                        t2 = BeautifulSoup(body2, "lxml").get_text(" ", strip=True)
                     except Exception:
-                        t2 = r2.text
-                    extra = extract_contacts(r2.text, t2)
+                        t2 = body2
+                    extra = extract_contacts(body2, t2)
                     for k in ("phone", "telegram", "vk", "whatsapp", "email"):
                         if not contacts[k] and extra[k]:
                             contacts[k] = extra[k]

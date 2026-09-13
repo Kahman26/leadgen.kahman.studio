@@ -29,7 +29,7 @@ def page_title(url):
     try:
         r = requests.get(url, timeout=REF_TIMEOUT,
                          headers={"User-Agent": config.USER_AGENT})
-        tag = BeautifulSoup(r.text, "lxml").find("title")
+        tag = BeautifulSoup(site_audit.decode_body(r), "lxml").find("title")
         return re.sub(r"\s+", " ", tag.get_text()).strip()[:120] if tag else ""
     except Exception:
         return ""
