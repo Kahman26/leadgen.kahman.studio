@@ -81,35 +81,12 @@ def cmd_apply(lead_id):
     }, ensure_ascii=False, indent=2))
 
 
-SERVER_DB = "/var/lib/leadgen/leads.db"
-
-
-def resolve_db():
-    """Находит боевую базу и не даёт молча создать пустую рядом с кодом.
-
-    Путь к базе сервис получает из systemd (LEADGEN_DB), а в обычной
-    консоли этой переменной нет. Без проверки sqlite просто создаст новый
-    пустой файл, и список объектов окажется пустым без всякой ошибки.
-    """
-    import os
-    from pathlib import Path
-
-    if not os.getenv("LEADGEN_DB") and Path(SERVER_DB).exists():
-        config.DB_PATH = SERVER_DB           # обычный случай на сервере
-
-    if not Path(config.DB_PATH).exists():
-        sys.exit(f"Базы нет: {config.DB_PATH}\n"
-                 f"Укажите её явно: LEADGEN_DB=/путь/к/leads.db")
-
-    print(f"# база: {config.DB_PATH}", file=sys.stderr)
-
-
 def main():
     args = sys.argv[1:]
     if not args:
         sys.exit(__doc__)
 
-    resolve_db()
+    db.resolve_path()
     db.init()
 
     command = args[0]
