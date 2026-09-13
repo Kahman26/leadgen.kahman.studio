@@ -56,8 +56,7 @@ def fetch(progress=None, token=None):
             "query": query,
             "count": MAX_COUNT,
             "status": ["ACTIVE"],
-            "locations": [{"city": config.CITY_NAME},
-                          {"region": config.CITY_REGION}],
+            "locations": [{"kladr_id": config.CITY_KLADR}],
         }
         try:
             r = requests.post(config.DADATA_URL, json=body, headers=headers, timeout=20)

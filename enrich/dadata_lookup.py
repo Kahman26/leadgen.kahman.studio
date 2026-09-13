@@ -101,9 +101,13 @@ def _score_match(lead_name, lead_address, suggestion):
             points += 3
             strong = True
             why.append("адрес совпадает: " + ", ".join(sorted(common)))
-    if "екатеринбург" in addr.lower():
+    if config.CITY_NAME.lower() in addr.lower():
         points += 1
-        why.append("адрес в Екатеринбурге")
+        why.append(f"адрес в {config.CITY_NAME}е")
+
+    # Подстраховка на случай, если фильтр региона снова перестанет работать
+    if addr and config.CITY_REGION.lower() not in addr.lower()             and config.CITY_NAME.lower() not in addr.lower():
+        return 0, ["адрес в другом регионе"], False
 
     return points, why, strong
 
@@ -157,16 +161,18 @@ def by_inn(inn, token=None):
     return _pack(found[0], "high", ["найдено по ИНН"])
 
 
-def by_name(name, address="", token=None, region=None):
+def by_name(name, address="", token=None, kladr=None):
     """Ищет компанию по торговому названию. Возвращает None, если неуверенно."""
     token = token or config.DADATA_TOKEN
     if not token or not (name or "").strip():
         return None
 
+    # Именно kladr_id: фильтр по названию региона Dadata принимает,
+    # но не применяет, и в выдачу попадает вся страна.
     body = {
         "query": name,
         "count": 10,
-        "locations": [{"region": region or config.CITY_REGION}],
+        "locations": [{"kladr_id": kladr or config.CITY_KLADR}],
     }
     best, best_points, best_why = None, 0, []
     for suggestion in _post(SUGGEST_URL, body, token):
