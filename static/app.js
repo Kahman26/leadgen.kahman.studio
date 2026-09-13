@@ -77,9 +77,11 @@ async function loadStats() {
   // категории заполняем один раз, из реальных данных
   const sel = $('fCategory');
   if (sel.options.length <= 1) {
+    const list = $('catList');
     for (const [cat, n] of Object.entries(s.by_category)) {
       if (cat === '—') continue;
       sel.add(new Option(`${cat} (${n})`, cat));
+      list.appendChild(new Option(cat));   // те же категории — в подсказки формы
     }
   }
 }
@@ -468,6 +470,52 @@ async function init() {
       alert(`Пересчитано лидов: ${r.updated}`);
     } catch (e) { alert('Не получилось: ' + e.message); }
     $('runRescore').disabled = false;
+  };
+
+  // ── добавление объекта руками ────────────────────────────────────────
+  const addFields = ['addName', 'addSite', 'addPhone', 'addTg', 'addVk',
+                     'addCat', 'addAddr', 'addNote'];
+
+  $('btnAdd').onclick = () => {
+    addFields.forEach((id) => { $(id).value = ''; });
+    $('addErr').classList.remove('on');
+    $('addDialog').showModal();
+    $('addName').focus();
+  };
+  $('addCancel').onclick = () => $('addDialog').close();
+
+  $('addGo').onclick = async () => {
+    const name = $('addName').value.trim();
+    if (!name) {
+      $('addErr').textContent = 'Без названия объект не добавить';
+      $('addErr').classList.add('on');
+      return;
+    }
+    $('addErr').classList.remove('on');
+    $('addGo').disabled = true;
+    $('addGo').textContent = 'Проверяю сайт…';
+
+    try {
+      const lead = await api('/api/lead', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          website: $('addSite').value, phone: $('addPhone').value,
+          telegram: $('addTg').value, vk: $('addVk').value,
+          category: $('addCat').value, address: $('addAddr').value,
+          note: $('addNote').value,
+        }),
+      });
+      $('addDialog').close();
+      await loadLeads();
+      await loadStats();
+      openLead(lead.id);                  // сразу показываем, что получилось
+    } catch (e) {
+      $('addErr').textContent = e.message;
+      $('addErr').classList.add('on');
+    }
+    $('addGo').disabled = false;
+    $('addGo').textContent = 'Добавить';
   };
 
   $('btnImport').onclick = () => $('fileInput').click();

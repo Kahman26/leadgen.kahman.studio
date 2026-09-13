@@ -3,7 +3,7 @@
 
 import csv
 import io
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Body, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
@@ -245,6 +245,91 @@ def update_lead(lead_id: int, payload: dict = Body(...)):
               list(fields.values()) + [db.now(), lead_id])
     c.commit()
     return {"ok": True}
+
+
+def _find_duplicate(name, website):
+    """Ищет уже заведённый объект — по домену или по названию."""
+    c = db.conn()
+
+    host = ""
+    if website:
+        host = (urlsplit(website if "//" in website else "http://" + website).hostname or "")
+        host = host[4:] if host.startswith("www.") else host
+
+    if host:
+        row = c.execute(
+            "SELECT id, name FROM leads WHERE website LIKE ? OR final_url LIKE ?",
+            (f"%{host}%", f"%{host}%"),
+        ).fetchone()
+        if row:
+            return row
+
+    key = pipeline.norm_name(name)
+    if key:
+        for row in c.execute("SELECT id, name FROM leads"):
+            if pipeline.norm_name(row["name"]) == key:
+                return row
+    return None
+
+
+@app.post("/api/lead")
+def create_lead(payload: dict = Body(...)):
+    """Добавляет объект руками: маркетолог нашёл его сам."""
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Нужно название объекта")
+
+    website = utils.decode_idna((payload.get("website") or "").strip())
+    if website and not utils.looks_like_url(website):
+        raise HTTPException(400, "Не похоже на адрес сайта")
+
+    dup = _find_duplicate(name, website)
+    if dup:
+        raise HTTPException(409, f"Такой объект уже есть: «{dup['name']}»")
+
+    phones = utils.split_phones(payload.get("phone") or "")
+    host = (urlsplit(website if "//" in website else "http://" + website).hostname
+            if website else "") or ""
+
+    lead = {
+        "name": name,
+        "category": (payload.get("category") or "").strip() or "Добавлен вручную",
+        "address": (payload.get("address") or "").strip(),
+        "lat": None, "lon": None,
+        "source": "manual",
+        "source_ref": (host or pipeline.norm_name(name))[:120],
+        "source_detail": "Добавлен вручную",
+        "website": website,
+        # Адрес вписан руками — сбор не должен его переписывать
+        "website_manual": 1 if website else 0,
+        "phone": phones[0] if phones else "",
+        "phones": phones,
+        "telegram": (payload.get("telegram") or "").strip().lstrip("@"),
+        "vk": (payload.get("vk") or "").strip(),
+        "email": (payload.get("email") or "").strip(),
+        "whatsapp": "",
+        "contact_source": {k: "вручную" for k, v in (
+            ("phone", phones), ("telegram", payload.get("telegram")),
+            ("vk", payload.get("vk")), ("email", payload.get("email"))) if v},
+    }
+
+    processed = pipeline.process_lead(lead, do_dadata=bool(config.DADATA_TOKEN))
+
+    c = db.conn()
+    fields = [f for f in db.UPSERT_FIELDS + ["source", "source_ref", "website_manual",
+                                             "created_at", "updated_at"]
+              if f in processed or f in ("created_at", "updated_at")]
+    processed["created_at"] = processed["updated_at"] = db.now()
+    ph = ", ".join("?" * len(fields))
+    cur = c.execute(f"INSERT INTO leads ({', '.join(fields)}) VALUES ({ph})",
+                    [processed.get(f) for f in fields])
+    if (payload.get("note") or "").strip():
+        c.execute("UPDATE leads SET note=? WHERE id=?",
+                  (payload["note"].strip(), cur.lastrowid))
+    c.commit()
+
+    row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
+    return db.row_to_dict(row)
 
 
 @app.post("/api/lead/{lead_id}/website")

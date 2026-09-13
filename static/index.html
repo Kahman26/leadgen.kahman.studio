@@ -15,6 +15,7 @@
   <span class="spacer"></span>
   <span class="who" id="who"></span>
   <button id="btnLogout">Выйти</button>
+  <button id="btnAdd">+ Объект</button>
   <button id="btnImport">Импорт CSV</button>
   <button id="btnExport">Выгрузить в CSV</button>
   <button id="btnRun" class="primary">Запустить сбор</button>
@@ -111,6 +112,46 @@
     <span class="spacer" style="flex:1"></span>
     <button id="runCancel">Отмена</button>
     <button id="runGo" class="primary">Поехали</button>
+  </div>
+</dialog>
+
+<dialog id="addDialog">
+  <h3 style="margin-top:0">Новый объект</h3>
+  <div class="err" id="addErr"></div>
+
+  <label class="fld"><span>Название *</span>
+    <input type="text" id="addName" placeholder="Баня на Уктусе" autocomplete="off"></label>
+
+  <label class="fld"><span>Сайт</span>
+    <input type="text" id="addSite" placeholder="example.ru" autocomplete="off"></label>
+
+  <label class="fld"><span>Телефон</span>
+    <input type="text" id="addPhone" placeholder="+7 343 000-00-00" autocomplete="off"></label>
+
+  <div class="fldrow">
+    <label class="fld"><span>Telegram</span>
+      <input type="text" id="addTg" placeholder="username" autocomplete="off"></label>
+    <label class="fld"><span>ВКонтакте</span>
+      <input type="text" id="addVk" placeholder="club123" autocomplete="off"></label>
+  </div>
+
+  <label class="fld"><span>Категория</span>
+    <input type="text" id="addCat" list="catList" placeholder="Баня / сауна" autocomplete="off">
+    <datalist id="catList"></datalist></label>
+
+  <label class="fld"><span>Адрес</span>
+    <input type="text" id="addAddr" placeholder="Екатеринбург, улица Ленина 1" autocomplete="off"></label>
+
+  <label class="fld"><span>Заметка</span>
+    <textarea id="addNote" style="min-height:60px" placeholder="Откуда узнали, что важно"></textarea></label>
+
+  <div class="muted" style="font-size:12px;margin-top:4px">
+    Сайт сразу проверится, а компания сверится с ЕГРЮЛ — это занимает несколько секунд.
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+    <button id="addCancel">Отмена</button>
+    <button id="addGo" class="primary">Добавить</button>
   </div>
 </dialog>
 

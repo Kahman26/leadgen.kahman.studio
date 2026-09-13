@@ -273,3 +273,19 @@ button.linkbtn {
   background: none; border: none; color: var(--link); font-size: 13px;
 }
 button.linkbtn:hover { border: none; text-decoration: underline; }
+
+/* ── форма добавления объекта ───────────────────────────────────────────── */
+dialog .fld { display: block; margin-bottom: 10px; }
+dialog .fld > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+dialog .fld input, dialog .fld textarea { width: 100%; }
+.fldrow { display: flex; gap: 10px; }
+.fldrow .fld { flex: 1; min-width: 0; }
+dialog .err {
+  display: none; margin-bottom: 12px; font-size: 13px;
+  background: #fef3f2; border: 1px solid #fda29b; color: #b42318;
+  padding: 9px 11px; border-radius: 8px;
+}
+dialog .err.on { display: block; }
+@media (prefers-color-scheme: dark) {
+  dialog .err { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
+}
