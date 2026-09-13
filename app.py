@@ -3,6 +3,7 @@
 
 import csv
 import io
+import json
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Body, HTTPException, Request, Response, UploadFile, File
@@ -111,6 +112,7 @@ def get_config(request: Request):
         "dadata_ready": bool(config.DADATA_TOKEN),
         "hot": scoring.HOT,
         "login": getattr(request.state, "login", ""),
+        "editable": EDITABLE,
     }
 
 
@@ -330,6 +332,101 @@ def create_lead(payload: dict = Body(...)):
 
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     return db.row_to_dict(row)
+
+
+# Что можно править руками. Подпись — для формы в карточке.
+EDITABLE = {
+    "name": "Название",
+    "category": "Категория",
+    "address": "Адрес",
+    "phone": "Телефон",
+    "telegram": "Telegram",
+    "vk": "ВКонтакте",
+    "whatsapp": "WhatsApp",
+    "email": "Почта",
+    "org_name": "Название в реестре",
+    "inn": "ИНН",
+    "ogrn": "ОГРН",
+    "director": "Руководитель",
+    "director_post": "Должность",
+    "okved": "ОКВЭД",
+    "legal_address": "Юр. адрес",
+}
+CONTACT_FIELDS = ("phone", "telegram", "vk", "whatsapp", "email")
+
+
+@app.post("/api/lead/{lead_id}/edit")
+def edit_lead(lead_id: int, payload: dict = Body(...)):
+    """Правит поля карточки руками и защищает их от следующего сбора."""
+    c = db.conn()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Лид не найден")
+
+    current = db.row_to_dict(row)
+    changes, touched = {}, set(current.get("manual_fields") or [])
+
+    for field, value in payload.items():
+        if field not in EDITABLE:
+            continue
+        value = (value or "").strip()
+
+        if field in ("phone", "whatsapp"):
+            phones = utils.split_phones(value)
+            value = phones[0] if phones else ""
+            if value == "" and (payload.get(field) or "").strip():
+                raise HTTPException(400, f"{EDITABLE[field]}: не похоже на российский номер")
+        elif field == "telegram":
+            value = value.lstrip("@").split("/")[-1]
+        elif field == "vk":
+            value = value.rstrip("/").split("/")[-1]
+
+        if value != (current.get(field) or ""):
+            changes[field] = value
+            touched.add(field)
+
+    if not changes:
+        return current
+
+    if "name" in changes and not changes["name"]:
+        raise HTTPException(400, "Название не может быть пустым")
+
+    # Телефоны в списке держим согласованными с основным номером
+    if "phone" in changes:
+        phones = [p for p in (current.get("phones") or []) if p != current.get("phone")]
+        if changes["phone"]:
+            phones.insert(0, changes["phone"])
+        changes["phones"] = json.dumps(phones[:8], ensure_ascii=False)
+
+    source = dict(current.get("contact_source") or {})
+    for field in CONTACT_FIELDS:
+        if field in changes:
+            if changes[field]:
+                source[field] = "вручную"
+            else:
+                source.pop(field, None)
+    changes["contact_source"] = json.dumps(source, ensure_ascii=False)
+    changes["manual_fields"] = json.dumps(sorted(touched), ensure_ascii=False)
+
+    sets = ", ".join(f"{f}=?" for f in changes)
+    c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
+              list(changes.values()) + [db.now(), lead_id])
+    c.commit()
+
+    # Контакты влияют на балл, поэтому пересчитываем
+    return pipeline.rescore_one(lead_id)
+
+
+@app.post("/api/lead/{lead_id}/unlock")
+def unlock_lead(lead_id: int):
+    """Снимает защиту ручных правок — сбор снова будет обновлять эти поля."""
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+        raise HTTPException(404, "Лид не найден")
+    c.execute("UPDATE leads SET manual_fields='', website_manual=0, updated_at=? WHERE id=?",
+              (db.now(), lead_id))
+    c.commit()
+    return db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone())
 
 
 @app.post("/api/lead/{lead_id}/website")

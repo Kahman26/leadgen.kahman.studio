@@ -265,6 +265,27 @@ AUDIT_FIELDS = ("site_status", "http_code", "https", "mobile_ready", "online_boo
                 "final_url")
 
 
+def rescore_one(lead_id):
+    """Пересчитывает признак и балл одного лида по сохранённым данным."""
+    c = db.conn()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        return None
+
+    lead = db.row_to_dict(row)
+    audit = {f: lead.get(f) for f in AUDIT_FIELDS}
+    audit["error"] = ""
+    code, text, missing, pitch, score = scoring.score_lead(lead, audit)
+    c.execute(
+        "UPDATE leads SET reason_code=?, reason_text=?, missing=?, pitch=?, score=?, "
+        "updated_at=? WHERE id=?",
+        (code, text, json.dumps(missing, ensure_ascii=False), pitch, score,
+         db.now(), lead_id),
+    )
+    c.commit()
+    return db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone())
+
+
 def rescore_all():
     """Пересчитывает признак и балл по уже сохранённым данным.
 

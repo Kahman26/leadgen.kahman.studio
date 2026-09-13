@@ -187,8 +187,19 @@ async function openLead(id) {
           <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
         </div>
       </div>
-      <button class="close" onclick="closeLead()">✕</button>
+      <div style="display:flex;gap:6px;flex:0 0 auto">
+        <button id="editLead" title="Исправить данные карточки">Изменить</button>
+        <button class="close" onclick="closeLead()">✕</button>
+      </div>
     </div>
+
+    ${(l.manual_fields || []).length || l.website_manual ? `
+      <div class="wasurl" style="margin-top:10px">
+        Исправлено вручную: ${esc([...(l.manual_fields || []),
+          ...(l.website_manual ? ['сайт'] : [])].map((f) => CFG.editable[f] || f).join(', '))}.
+        Сбор эти поля не перезаписывает.
+        <button class="linkbtn" id="unlockLead">Вернуть автозаполнение</button>
+      </div>` : ''}
 
     <div class="section">
       <h3>С чего начать разговор</h3>
@@ -301,6 +312,16 @@ async function openLead(id) {
     setTimeout(() => ($('noteSaved').textContent = ''), 1500);
   };
 
+  $('editLead').onclick = () => openEditor(l);
+
+  if ($('unlockLead')) {
+    $('unlockLead').onclick = async () => {
+      await api(`/api/lead/${id}/unlock`, { method: 'POST' });
+      await openLead(id);
+      loadLeads();
+    };
+  }
+
   $('toggleMore').onclick = () => {
     showAll = !showAll;
     $('drawer').querySelectorAll('.more').forEach((el) => { el.hidden = !showAll; });
@@ -366,6 +387,61 @@ async function openLead(id) {
   selectedId = String(id);
   markSelected();
   $('drawer').classList.add('on');        // на узком экране панель выезжает поверх
+}
+
+// Порядок полей в форме правки: сначала про объект, потом контакты, потом реестр
+const EDIT_GROUPS = [
+  ['Объект', ['name', 'category', 'address']],
+  ['Контакты', ['phone', 'telegram', 'vk', 'whatsapp', 'email']],
+  ['Реквизиты по ЕГРЮЛ', ['org_name', 'inn', 'ogrn', 'director', 'director_post',
+                          'okved', 'legal_address']],
+];
+
+function openEditor(l) {
+  const field = (key) => `
+    <label class="fld"><span>${esc(CFG.editable[key] || key)}</span>
+      <input type="text" data-edit="${key}" value="${esc(l[key] ?? '')}"
+             autocomplete="off"></label>`;
+
+  $('drawer').innerHTML = `
+    <div class="cardhead">
+      <div><h2>${esc(l.name)}</h2>
+      <div class="muted">Правка карточки</div></div>
+    </div>
+    <div class="err" id="editErr"></div>
+    ${EDIT_GROUPS.map(([title, keys]) => `
+      <div class="section"><h3>${title}</h3>${keys.map(field).join('')}</div>`).join('')}
+    <div class="muted" style="font-size:12px;margin-top:12px">
+      Исправленные поля сбор больше не перезаписывает. Пустое значение стирает данные.
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="editSave" class="primary">Сохранить</button>
+      <button id="editCancel">Отмена</button>
+    </div>`;
+
+  $('editCancel').onclick = () => openLead(l.id);
+
+  $('editSave').onclick = async () => {
+    const payload = {};
+    $('drawer').querySelectorAll('[data-edit]').forEach((el) => {
+      payload[el.dataset.edit] = el.value;
+    });
+    $('editSave').disabled = true;
+    $('editSave').textContent = 'Сохраняю…';
+    try {
+      await api(`/api/lead/${l.id}/edit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      await openLead(l.id);
+      loadLeads(); loadStats();
+    } catch (e) {
+      $('editErr').textContent = e.message;
+      $('editErr').classList.add('on');
+      $('editSave').disabled = false;
+      $('editSave').textContent = 'Сохранить';
+    }
+  };
 }
 
 function markSelected() {

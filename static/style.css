@@ -289,3 +289,17 @@ dialog .err.on { display: block; }
 @media (prefers-color-scheme: dark) {
   dialog .err { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
 }
+
+/* Форма правки карточки: те же поля, что в диалоге добавления */
+.side .fld { display: block; margin-bottom: 10px; }
+.side .fld > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.side .fld input { width: 100%; }
+.side .err {
+  display: none; margin-top: 12px; font-size: 13px;
+  background: #fef3f2; border: 1px solid #fda29b; color: #b42318;
+  padding: 9px 11px; border-radius: 8px;
+}
+.side .err.on { display: block; }
+@media (prefers-color-scheme: dark) {
+  .side .err { background: #2a1614; border-color: #7a2e28; color: #ff9c92; }
+}

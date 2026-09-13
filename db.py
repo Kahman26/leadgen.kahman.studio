@@ -79,9 +79,10 @@ CREATE TABLE IF NOT EXISTS leads (
     hidden          INTEGER DEFAULT 0,   -- убран из списка (закрылись и т.п.)
     hidden_reason   TEXT DEFAULT '',
 
-    -- ручная правка адреса сайта
-    previous_website TEXT DEFAULT '',    -- что было до правки
+    -- ручные правки
+    previous_website TEXT DEFAULT '',    -- что было до правки адреса
     website_manual  INTEGER DEFAULT 0,   -- адрес задан руками, сбор его не трогает
+    manual_fields   TEXT DEFAULT '',     -- JSON-список полей, исправленных руками
 
     created_at      TEXT,
     updated_at      TEXT,
@@ -151,6 +152,7 @@ MIGRATIONS = [
     ("employee_count", "INTEGER"),
     ("dadata_confidence", "TEXT DEFAULT ''"),
     ("dadata_match", "TEXT DEFAULT ''"),
+    ("manual_fields", "TEXT DEFAULT ''"),
 ]
 
 
@@ -199,16 +201,20 @@ def upsert(lead: dict) -> str:
     lead["updated_at"] = now()
 
     row = c.execute(
-        "SELECT id, website_manual FROM leads WHERE source=? AND source_ref=?",
+        "SELECT id, website_manual, manual_fields FROM leads "
+        "WHERE source=? AND source_ref=?",
         (lead.get("source"), lead.get("source_ref")),
     ).fetchone()
 
     if row:
         fields = [f for f in UPSERT_FIELDS if f in lead]
-        # Адрес, исправленный руками, сбор перезаписывать не должен:
-        # иначе следующий прогон вернёт мёртвую ссылку из OSM.
+        # Всё, что человек исправил руками, сбор перезаписывать не должен:
+        # иначе следующий прогон вернёт мёртвую ссылку или чужой телефон.
+        protected = set(manual_list(row["manual_fields"]))
         if row["website_manual"]:
-            fields = [f for f in fields if f != "website"]
+            protected.add("website")
+        if protected:
+            fields = [f for f in fields if f not in protected]
         sets = ", ".join(f"{f}=?" for f in fields) + ", updated_at=?"
         vals = [lead[f] for f in fields] + [lead["updated_at"], row["id"]]
         c.execute(f"UPDATE leads SET {sets} WHERE id=?", vals)
@@ -227,8 +233,18 @@ def upsert(lead: dict) -> str:
     return "added"
 
 
+def manual_list(value):
+    """Разбирает JSON-список исправленных полей. Битые данные не должны ломать сбор."""
+    try:
+        parsed = json.loads(value or "[]")
+        return [str(x) for x in parsed] if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
 def row_to_dict(r: sqlite3.Row) -> dict:
     d = dict(r)
+    d["manual_fields"] = manual_list(d.get("manual_fields"))
     for f in ("phones", "missing", "contact_source"):
         if d.get(f):
             try:
