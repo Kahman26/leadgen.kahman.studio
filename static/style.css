@@ -35,6 +35,10 @@
 
 * { box-sizing: border-box; }
 
+/* Свои правила с display перебивают браузерный [hidden]: у .kv задан grid,
+   и без этой строки скрытый блок остаётся на экране. */
+[hidden] { display: none !important; }
+
 /* Ссылки без класса раньше брали цвет браузера по умолчанию — тёмно-синий,
    который на тёмном фоне почти не читался. */
 a { color: var(--link); text-decoration: none; overflow-wrap: anywhere; }
@@ -262,3 +266,10 @@ tbody tr.is-hidden .name::after {
 
 /* ── кто вошёл ──────────────────────────────────────────────────────────── */
 header .who { color: var(--muted); font-size: 13px; }
+
+/* Кнопка-ссылка «смотреть полностью»: не должна спорить с настоящими кнопками */
+button.linkbtn {
+  margin-top: 8px; padding: 4px 0;
+  background: none; border: none; color: var(--link); font-size: 13px;
+}
+button.linkbtn:hover { border: none; text-decoration: underline; }

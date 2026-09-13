@@ -9,6 +9,7 @@ let total = 0;
 let statFilter = null;      // быстрый фильтр по клику на карточку статистики
 let pollTimer = null;
 let selectedId = null;   // какой лид открыт в правой панели
+let showAll = false;     // развёрнута ли дополнительная информация в карточке
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -140,10 +141,13 @@ async function openLead(id) {
   const l = await api('/api/lead/' + id);
   const site = l.final_url || l.website;
 
+  // Наверху только то, что нужно каждый раз; остальное — под кнопкой
   const tech = [
     ['Сайт', site ? `<a href="${esc(site)}" target="_blank" rel="noopener">${esc(site)}</a>` : '—'],
     ['Состояние', { ok: 'работает', dead: 'не открывается', none: 'сайта нет',
                     blocked: 'закрыт защитой' }[l.site_status] || '—'],
+  ];
+  const techMore = [
     ['Код ответа', l.http_code ?? '—'],
     ['Мобильная версия', l.site_status === 'ok' ? (l.mobile_ready ? 'есть' : 'нет') : '—'],
     ['Бронирование', l.site_status === 'ok' ? bookingText(l) : '—'],
@@ -208,6 +212,10 @@ async function openLead(id) {
     <div class="section">
       <h3>Сайт и техника</h3>
       <dl class="kv">${tech.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      <dl class="kv more" ${showAll ? '' : 'hidden'}>${
+        techMore.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      <button class="linkbtn" id="toggleMore">${
+        showAll ? 'Свернуть' : 'Смотреть полностью'}</button>
 
       <div class="siteedit">
         <input type="text" id="siteInput" placeholder="Новый адрес сайта"
@@ -236,7 +244,7 @@ async function openLead(id) {
         style="margin-top:6px;font-size:12px">Подтверждено: ${esc(l.dadata_match)}</div>` : ''}
       </div>` : ''}
 
-    <div class="section">
+    <div class="section more" ${showAll ? '' : 'hidden'}>
       <h3>Откуда лид</h3>
       <div>${esc(l.source_detail || l.source)}</div>
       ${l.lat ? `<a class="chip" style="margin-top:6px" target="_blank"
@@ -289,6 +297,12 @@ async function openLead(id) {
     });
     $('noteSaved').textContent = ' сохранено';
     setTimeout(() => ($('noteSaved').textContent = ''), 1500);
+  };
+
+  $('toggleMore').onclick = () => {
+    showAll = !showAll;
+    $('drawer').querySelectorAll('.more').forEach((el) => { el.hidden = !showAll; });
+    $('toggleMore').textContent = showAll ? 'Свернуть' : 'Смотреть полностью';
   };
 
   // ── смена адреса сайта и перепроверка ──────────────────────────────────
