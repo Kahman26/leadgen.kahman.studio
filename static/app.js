@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const PAGE = 100;
 
-let CFG = { statuses: {}, reasons: {}, hot: 60, ai_batch_limit: 25 };
+let CFG = { statuses: {}, reasons: {}, hot: 60 };
 let offset = 0;
 let total = 0;
 let statFilter = null;      // быстрый фильтр по клику на карточку статистики
@@ -191,7 +191,7 @@ async function openLead(id) {
         </div>
       </div>
       <div style="display:flex;gap:6px;flex:0 0 auto">
-        <button id="aiLead" title="Найти информацию в интернете через Claude">Проверить</button>
+        <button id="aiLead" title="Проверить объект через чат с Claude">Проверка</button>
         <button id="editLead" title="Исправить данные карточки">Изменить</button>
         <button class="close" onclick="closeLead()">✕</button>
       </div>
@@ -238,6 +238,8 @@ async function openLead(id) {
         ${l.ai_summary ? `<div class="pitch">${esc(l.ai_summary)}</div>` : ''}
         ${(l.ai_problems || []).length ? `<ul class="missing" style="margin-top:8px">${
           l.ai_problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+        ${l.ai_director ? `<div class="muted" style="margin-top:8px">Руководитель по поиску:
+          ${esc(l.ai_director)}</div>` : ''}
         ${l.ai_found_site ? `<div class="muted" style="margin-top:8px">Найденный сайт:
           <a href="${esc(l.ai_found_site)}" target="_blank" rel="noopener">${esc(l.ai_found_site)}</a></div>` : ''}
         ${(l.ai_aggregators || []).length ? `<div class="muted" style="margin-top:6px">Брони идут через:
@@ -361,19 +363,7 @@ async function openLead(id) {
     loadLeads();
   });
 
-  $('aiLead').onclick = async () => {
-    $('aiLead').disabled = true;
-    $('aiLead').textContent = 'Ищу…';
-    try {
-      await api(`/api/lead/${id}/research`, { method: 'POST' });
-      await openLead(id);
-      loadLeads(); loadStats();
-    } catch (e) {
-      alert('Автопроверка не удалась: ' + e.message);
-      $('aiLead').disabled = false;
-      $('aiLead').textContent = 'Проверить';
-    }
-  };
+  $('aiLead').onclick = () => openResearch(l);
 
   $('editLead').onclick = () => openEditor(l);
 
@@ -459,6 +449,72 @@ const EDIT_GROUPS = [
   ['Реквизиты по ЕГРЮЛ', ['org_name', 'inn', 'ogrn', 'director', 'director_post',
                           'okved', 'legal_address']],
 ];
+
+function openResearch(l) {
+  $('drawer').innerHTML = `
+    <div class="cardhead">
+      <div><h2>${esc(l.name)}</h2>
+      <div class="muted">Проверка через чат</div></div>
+      <button class="close" id="resBack">Назад</button>
+    </div>
+
+    <div class="section">
+      <h3>Шаг 1 — запрос</h3>
+      <button id="resCopy" class="primary">Скопировать запрос</button>
+      <div class="muted" style="margin-top:6px;font-size:12px">
+        Вставьте его в чат с Claude, где включён поиск в интернете.
+      </div>
+      <textarea id="resBrief" style="min-height:120px;margin-top:8px" readonly></textarea>
+    </div>
+
+    <div class="section">
+      <h3>Шаг 2 — ответ</h3>
+      <textarea id="resAnswer" style="min-height:150px"
+                placeholder="Вставьте сюда JSON из чата"></textarea>
+      <div class="err" id="resErr"></div>
+      <button id="resSave" class="primary" style="margin-top:8px">Сохранить в карточку</button>
+      <div class="muted" style="margin-top:6px;font-size:12px">
+        Контакты лягут только в пустые поля, статус станет «Автопроверка».
+      </div>
+    </div>`;
+
+  $('resBack').onclick = () => openLead(l.id);
+
+  api(`/api/lead/${l.id}/brief`)
+    .then((d) => { $('resBrief').value = d.text; })
+    .catch((e) => { $('resBrief').value = 'Не удалось получить запрос: ' + e.message; });
+
+  $('resCopy').onclick = async () => {
+    const text = $('resBrief').value;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // В некоторых браузерах буфер недоступен без жеста — выделяем руками
+      $('resBrief').select();
+    }
+    $('resCopy').textContent = 'Скопировано';
+    setTimeout(() => { $('resCopy').textContent = 'Скопировать запрос'; }, 1500);
+  };
+
+  $('resSave').onclick = async () => {
+    $('resErr').classList.remove('on');
+    $('resSave').disabled = true;
+    $('resSave').textContent = 'Сохраняю…';
+    try {
+      await api(`/api/lead/${l.id}/findings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: $('resAnswer').value }),
+      });
+      await openLead(l.id);
+      loadLeads(); loadStats();
+    } catch (e) {
+      $('resErr').textContent = e.message;
+      $('resErr').classList.add('on');
+      $('resSave').disabled = false;
+      $('resSave').textContent = 'Сохранить в карточку';
+    }
+  };
+}
 
 function openEditor(l) {
   const field = (key) => `
@@ -560,9 +616,6 @@ async function init() {
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
-  $('btnResearch').title = CFG.ai_ready
-    ? `Поиск в интернете через ${CFG.ai_model}`
-    : 'Недоступно: не задан ANTHROPIC_API_KEY';
   $('optDadata').checked = CFG.dadata_ready;
   $('optDadata').disabled = !CFG.dadata_ready;
 
@@ -658,45 +711,6 @@ async function init() {
     }
     $('addGo').disabled = false;
     $('addGo').textContent = 'Добавить';
-  };
-
-  // ── массовая автопроверка ────────────────────────────────────────────
-  const aiCost = () => {
-    const n = Math.max(1, Math.min(Number($('aiLimit').value) || 1, CFG.ai_batch_limit));
-    $('aiLimit').value = n;
-    // Ориентир, а не счёт: поиск $0.01 за запрос плюс токены прочитанных страниц
-    $('aiCost').textContent =
-      `${n} объектов — ориентировочно $${(n * 0.2).toFixed(2)} (${CFG.ai_model}). ` +
-      `За один раз не больше ${CFG.ai_batch_limit}.`;
-  };
-
-  $('btnResearch').onclick = () => {
-    if (!CFG.ai_ready) {
-      alert('Автопроверка недоступна: на сервере не задан ANTHROPIC_API_KEY');
-      return;
-    }
-    $('aiErr').classList.remove('on');
-    aiCost();
-    $('aiDialog').showModal();
-  };
-  $('aiLimit').oninput = aiCost;
-  $('aiCancel').onclick = () => $('aiDialog').close();
-
-  $('aiGo').onclick = async () => {
-    try {
-      await api('/api/research', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: $('aiStatus').value,
-          limit: Number($('aiLimit').value) || 1,
-        }),
-      });
-      $('aiDialog').close();
-      startPolling();
-    } catch (e) {
-      $('aiErr').textContent = e.message;
-      $('aiErr').classList.add('on');
-    }
   };
 
   $('btnImport').onclick = () => $('fileInput').click();

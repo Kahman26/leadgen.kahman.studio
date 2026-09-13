@@ -76,15 +76,6 @@ OUTDATED_YEARS = 3         # копирайт старше стольки лет
 # PageSpeed Insights — опционально, без ключа шаг просто пропускается.
 PAGESPEED_KEY = os.getenv("PAGESPEED_KEY", "")
 
-# ── Автопроверка через Claude ────────────────────────────────────────────────
-# Ключ: https://console.anthropic.com/settings/keys
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-# Opus 5 — самый сильный; Sonnet 5 примерно вдвое дешевле по токенам.
-AI_MODEL = os.getenv("LEADGEN_AI_MODEL", "claude-opus-5")
-# Ограничение на один массовый прогон: поиск платный, и случайно
-# запустить проверку всей базы не должно быть возможно одним кликом.
-AI_BATCH_LIMIT = int(os.getenv("LEADGEN_AI_BATCH_LIMIT", "25"))
-
 # ── Веб-интерфейс ────────────────────────────────────────────────────────────
 HOST = os.getenv("LEADGEN_HOST", "127.0.0.1")
 PORT = int(os.getenv("LEADGEN_PORT", "8765"))

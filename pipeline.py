@@ -10,7 +10,7 @@ import config
 import db
 import scoring
 import utils
-from enrich import ai_research, dadata_lookup, site_audit, whois_check
+from enrich import dadata_lookup, site_audit, whois_check
 from sources import dadata, overpass
 
 # ── состояние запуска для веб-интерфейса ─────────────────────────────────────
@@ -296,7 +296,7 @@ def apply_research(lead_id, found):
         "ai_aggregators": json.dumps(found.get("aggregators") or [], ensure_ascii=False),
         "ai_found_site": _clean(found.get("website")),
         "ai_checked_at": db.now(),
-        "ai_model": found.get("_model") or config.AI_MODEL,
+        "ai_model": found.get("_model") or "чат",
         "ai_error": "",
         "status": "auto_checked",
     }
@@ -318,10 +318,12 @@ def apply_research(lead_id, found):
             changes[field] = value
             source[field] = "Claude"
 
+    # Руководителя из поиска держим отдельно от реестрового: поле director
+    # принадлежит ЕГРЮЛ и очищается при каждой сверке, да и доверие к нему другое.
     boss = _clean(director.get("name"))
-    if boss and not lead.get("director") and "director" not in protected:
-        changes["director"] = boss
-        changes["director_post"] = _clean(director.get("post"))
+    if boss:
+        post = _clean(director.get("post"))
+        changes["ai_director"] = f"{boss}, {post}" if post else boss
 
     changes["contact_source"] = json.dumps(source, ensure_ascii=False)
 
@@ -344,77 +346,6 @@ def apply_research(lead_id, found):
 
     # Сайт сменился — перепроверяем его и пересчитываем балл
     return recheck_lead(lead_id) if replace_site else rescore_one(lead_id)
-
-
-def research_lead(lead_id):
-    """Автопроверка одного лида: поиск в интернете + запись результата."""
-    c = db.conn()
-    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
-    if not row:
-        return None, "Лид не найден"
-
-    found, error = ai_research.research(db.row_to_dict(row))
-    if error:
-        c.execute("UPDATE leads SET ai_error=?, ai_checked_at=?, updated_at=? WHERE id=?",
-                  (error, db.now(), db.now(), lead_id))
-        c.commit()
-        return None, error
-
-    return apply_research(lead_id, found), ""
-
-
-def research_many(status="new", limit=None):
-    """Прогоняет автопроверку по нескольким лидам с показом хода работы."""
-    limit = min(int(limit or config.AI_BATCH_LIMIT), config.AI_BATCH_LIMIT)
-
-    with _lock:
-        if _state["running"]:
-            return
-        _state.update(running=True, log=[], done=0, total=0, error=None)
-
-    try:
-        where = "WHERE COALESCE(hidden,0)=0"
-        params = []
-        if status:
-            where += " AND status=?"
-            params.append(status)
-
-        rows = db.conn().execute(
-            f"SELECT id, name FROM leads {where} "
-            "ORDER BY COALESCE(priority,0) DESC, score DESC LIMIT ?",
-            params + [limit],
-        ).fetchall()
-
-        with _lock:
-            _state["total"] = len(rows)
-        _log(f"Автопроверка: {len(rows)} объектов, модель {config.AI_MODEL}")
-
-        ok = failed = 0
-        for i, r in enumerate(rows, 1):
-            _log(f"[{i}/{len(rows)}] {r['name'][:40]}")
-            _, error = research_lead(r["id"])
-            if error:
-                failed += 1
-                _log(f"    не получилось: {error[:80]}")
-            else:
-                ok += 1
-            with _lock:
-                _state["done"] = i
-
-        _log(f"Готово: проверено {ok}, с ошибкой {failed}")
-    except Exception as exc:
-        with _lock:
-            _state["error"] = str(exc)
-        _log(f"Ошибка автопроверки: {exc}")
-    finally:
-        with _lock:
-            _state["running"] = False
-
-
-def research_async(**kw):
-    t = threading.Thread(target=research_many, kwargs=kw, daemon=True)
-    t.start()
-    return t
 
 
 def rescore_one(lead_id):

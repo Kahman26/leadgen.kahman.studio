@@ -17,7 +17,7 @@ import db
 import utils
 import pipeline
 import scoring
-from enrich import ai_research
+from enrich import research_brief
 
 app = FastAPI(title="Сборщик лидов — ниша бронирования", docs_url=None, redoc_url=None)
 db.init()
@@ -117,9 +117,7 @@ def get_config(request: Request):
         "hot": scoring.HOT,
         "login": getattr(request.state, "login", ""),
         "editable": EDITABLE,
-        "ai_ready": ai_research.available(),
-        "ai_model": config.AI_MODEL,
-        "ai_batch_limit": config.AI_BATCH_LIMIT,
+
     }
 
 
@@ -436,33 +434,29 @@ def edit_lead(lead_id: int, payload: dict = Body(...)):
     return pipeline.rescore_one(lead_id)
 
 
-@app.post("/api/lead/{lead_id}/research")
-def research_one(lead_id: int):
-    """Автопроверка одного объекта: поиск в интернете через Claude."""
-    if not ai_research.available():
-        raise HTTPException(400, "Автопроверка недоступна: не задан ANTHROPIC_API_KEY")
-    if pipeline.state()["running"]:
-        raise HTTPException(409, "Идёт другая операция, дождитесь окончания")
+@app.get("/api/lead/{lead_id}/brief")
+def research_brief_text(lead_id: int):
+    """Готовый запрос для чата с Claude по этому объекту."""
+    row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Лид не найден")
+    return {"text": research_brief.build(db.row_to_dict(row), config.CITY_NAME)}
 
-    lead, error = pipeline.research_lead(lead_id)
+
+@app.post("/api/lead/{lead_id}/findings")
+def save_findings(lead_id: int, payload: dict = Body(...)):
+    """Принимает JSON, который человек принёс из чата, и раскладывает по полям."""
+    if not db.conn().execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+        raise HTTPException(404, "Лид не найден")
+
+    found, error = research_brief.parse(payload.get("text"))
     if error:
-        raise HTTPException(502, error)
+        raise HTTPException(400, error)
+
+    lead = pipeline.apply_research(lead_id, found)
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
     return lead
-
-
-@app.post("/api/research")
-def research_batch(payload: dict = Body(default={})):
-    """Массовая автопроверка. Поиск платный, поэтому пачка ограничена."""
-    if not ai_research.available():
-        raise HTTPException(400, "Автопроверка недоступна: не задан ANTHROPIC_API_KEY")
-    if pipeline.state()["running"]:
-        raise HTTPException(409, "Уже идёт сбор или проверка")
-
-    pipeline.research_async(
-        status=payload.get("status", "new"),
-        limit=payload.get("limit"),
-    )
-    return {"ok": True}
 
 
 @app.post("/api/lead/{lead_id}/unlock")

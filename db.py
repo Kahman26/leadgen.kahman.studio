@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS leads (
     ai_problems     TEXT DEFAULT '',     -- JSON-список проблем
     ai_sources      TEXT DEFAULT '',     -- JSON-список ссылок, откуда это взято
     ai_found_site   TEXT DEFAULT '',     -- найденный актуальный сайт
+    ai_director     TEXT DEFAULT '',     -- руководитель по версии поиска, не ЕГРЮЛ
     ai_aggregators  TEXT DEFAULT '',     -- JSON: где принимает брони (Суточно и т.п.)
     ai_checked_at   TEXT DEFAULT '',
     ai_model        TEXT DEFAULT '',
@@ -171,6 +172,7 @@ MIGRATIONS = [
     ("ai_problems", "TEXT DEFAULT ''"),
     ("ai_sources", "TEXT DEFAULT ''"),
     ("ai_found_site", "TEXT DEFAULT ''"),
+    ("ai_director", "TEXT DEFAULT ''"),
     ("ai_aggregators", "TEXT DEFAULT ''"),
     ("ai_checked_at", "TEXT DEFAULT ''"),
     ("ai_model", "TEXT DEFAULT ''"),
