@@ -320,3 +320,30 @@ dialog .err.on { display: block; }
   background: var(--accent); color: #fff; font-weight: 650;
   font-variant-numeric: tabular-nums; font-size: 12px;
 }
+
+/* ── референсы ──────────────────────────────────────────────────────────── */
+.refgroup { margin-bottom: 26px; }
+.refgroup h2 {
+  font-size: 15px; margin: 0 0 10px; font-weight: 650; letter-spacing: -.01em;
+}
+.refgrid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+}
+.refcard {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+}
+.refcard:hover { border-color: var(--accent); }
+.refhead { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.refname { font-weight: 600; font-size: 14px; }
+.refacts { display: flex; gap: 4px; flex: 0 0 auto; }
+.refacts button { padding: 3px 8px; line-height: 1.2; font-size: 13px; }
+.refnote {
+  margin-top: 8px; font-size: 13px; line-height: 1.5;
+  border-left: 3px solid var(--accent); padding-left: 10px;
+}
+
+/* Ссылка-кнопка «к лидам» в шапке */
+a.btn { display: inline-block; text-decoration: none; }
+a.btn:hover { text-decoration: none; }

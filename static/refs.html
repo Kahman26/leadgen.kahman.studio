@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Референсы — сборщик лидов</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Референсы</h1>
+  <span class="city">хорошие сайты по типам объектов</span>
+  <span class="spacer"></span>
+  <a class="btn" href="/">← К лидам</a>
+  <button id="btnAddRef" class="primary">+ Референс</button>
+</header>
+
+<div class="wrap">
+  <p class="muted" style="max-width:820px;margin:0 0 18px">
+    Примеры, на которые можно ориентироваться при разговоре с клиентом и при
+    проектировании. Рядом с каждым — объективные данные того же аудита, что мы
+    гоняем по лидам: адаптив, движок бронирования, скорость. Если сайт
+    перестанет им соответствовать, это будет видно после перепроверки.
+  </p>
+
+  <div class="filters">
+    <select id="fCat"><option value="">Все типы объектов</option></select>
+    <span class="spacer"></span>
+    <span class="muted" id="count"></span>
+  </div>
+
+  <div id="groups"></div>
+  <div class="empty" id="empty" hidden>Пока пусто. Добавьте первый референс.</div>
+</div>
+
+<dialog id="refDialog">
+  <h3 style="margin-top:0">Новый референс</h3>
+  <div class="err" id="refErr"></div>
+
+  <label class="fld"><span>Название *</span>
+    <input type="text" id="refName" placeholder="Курорт Мрия" autocomplete="off"></label>
+
+  <label class="fld"><span>Адрес сайта *</span>
+    <input type="text" id="refUrl" placeholder="mriyaresort.com" autocomplete="off"></label>
+
+  <div class="fldrow">
+    <label class="fld"><span>Тип объекта *</span>
+      <input type="text" id="refCat" list="refCatList" placeholder="Отель" autocomplete="off">
+      <datalist id="refCatList"></datalist></label>
+    <label class="fld"><span>Город</span>
+      <input type="text" id="refCity" placeholder="Ялта" autocomplete="off"></label>
+  </div>
+
+  <label class="fld"><span>Чем хорош</span>
+    <textarea id="refNote" style="min-height:60px"
+              placeholder="Одно-два предложения"></textarea></label>
+
+  <label class="fld"><span>Что подсмотреть — по пункту на строку</span>
+    <textarea id="refStrengths" style="min-height:80px"
+              placeholder="Выбор дат прямо на первом экране&#10;Карточка номера с ценой и фото"></textarea></label>
+
+  <div class="muted" style="font-size:12px;margin-top:4px">
+    Сайт сразу проверится аудитом — это занимает несколько секунд.
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+    <button id="refCancel">Отмена</button>
+    <button id="refGo" class="primary">Добавить</button>
+  </div>
+</dialog>
+
+<script src="/static/refs.js"></script>
+</body>
+</html>

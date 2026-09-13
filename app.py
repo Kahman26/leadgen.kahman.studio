@@ -16,6 +16,7 @@ import config
 import db
 import utils
 import pipeline
+import refs
 import scoring
 from enrich import research_brief
 
@@ -629,6 +630,57 @@ async def import_csv(file: UploadFile = File(...)):
         added += 1
 
     return {"ok": True, "added": added}
+
+
+# ── референсы: хорошие сайты по типам объектов ───────────────────────────────
+
+@app.get("/refs")
+def refs_page():
+    return FileResponse(config.BASE_DIR / "static" / "refs.html")
+
+
+@app.get("/api/refs")
+def refs_list(category: str = ""):
+    grouped = refs.listing(category)
+    return {"groups": grouped,
+            "total": sum(len(v) for v in grouped.values())}
+
+
+@app.post("/api/refs")
+def refs_add(payload: dict = Body(...)):
+    name = (payload.get("name") or "").strip()
+    url = utils.decode_idna((payload.get("url") or "").strip())
+    category = (payload.get("category") or "").strip()
+
+    if not name or not category:
+        raise HTTPException(400, "Нужны название и категория")
+    if not url or not utils.looks_like_url(url):
+        raise HTTPException(400, "Не похоже на адрес сайта")
+
+    strengths = payload.get("strengths") or []
+    if isinstance(strengths, str):
+        strengths = [s.strip() for s in strengths.splitlines() if s.strip()]
+
+    return refs.save(category, name, url,
+                     city=(payload.get("city") or "").strip(),
+                     note=(payload.get("note") or "").strip(),
+                     strengths=strengths)
+
+
+@app.post("/api/refs/{ref_id}/recheck")
+def refs_recheck(ref_id: int):
+    ref = refs.recheck(ref_id)
+    if not ref:
+        raise HTTPException(404, "Референс не найден")
+    return ref
+
+
+@app.delete("/api/refs/{ref_id}")
+def refs_delete(ref_id: int):
+    if not refs.get(ref_id):
+        raise HTTPException(404, "Референс не найден")
+    refs.remove(ref_id)
+    return {"ok": True}
 
 
 # ── статика ──────────────────────────────────────────────────────────────────

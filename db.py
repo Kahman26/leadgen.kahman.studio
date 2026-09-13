@@ -115,6 +115,33 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 
+-- Референсы: хорошие сайты по каждому типу объектов, на которые можно
+-- ориентироваться при разговоре с клиентом и при проектировании.
+CREATE TABLE IF NOT EXISTS refs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    category      TEXT NOT NULL,       -- те же категории, что и у лидов
+    name          TEXT NOT NULL,
+    url           TEXT NOT NULL UNIQUE,
+    city          TEXT DEFAULT '',
+    note          TEXT DEFAULT '',     -- чем хорош, словами
+    strengths     TEXT DEFAULT '',     -- JSON-список: что именно подсмотреть
+
+    -- объективная часть: тот же аудит, что и для лидов
+    site_status   TEXT,
+    http_code     INTEGER,
+    https         INTEGER,
+    mobile_ready  INTEGER,
+    booking_type  TEXT,
+    booking_engine TEXT,
+    cms           TEXT,
+    load_ms       INTEGER,
+    page_title    TEXT DEFAULT '',
+
+    checked_at    TEXT,
+    created_at    TEXT
+);
+
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT,
@@ -147,6 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_hidden ON leads(hidden);
 CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(org_status);
 CREATE INDEX IF NOT EXISTS idx_leads_priority ON leads(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_refs_category ON refs(category);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
