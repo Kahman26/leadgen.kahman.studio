@@ -16,6 +16,7 @@
   <span class="who" id="who"></span>
   <button id="btnLogout">Выйти</button>
   <button id="btnAdd">+ Объект</button>
+  <button id="btnResearch">Автопроверка</button>
   <button id="btnImport">Импорт CSV</button>
   <button id="btnExport">Выгрузить в CSV</button>
   <button id="btnRun" class="primary">Запустить сбор</button>
@@ -154,6 +155,34 @@
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
     <button id="addCancel">Отмена</button>
     <button id="addGo" class="primary">Добавить</button>
+  </div>
+</dialog>
+
+<dialog id="aiDialog">
+  <h3 style="margin-top:0">Автопроверка через Claude</h3>
+  <div class="err" id="aiErr"></div>
+  <p style="margin-top:0;font-size:13px;line-height:1.55">
+    Claude поищет в интернете по каждому объекту: работает ли бизнес, какой у него
+    действующий сайт, через какие площадки идут брони, контакты руководителя
+    и проблемы с онлайн-присутствием. Найденное запишется в карточку,
+    статус станет <b>«Автопроверка»</b> — дальше проверяете вы.
+  </p>
+
+  <label class="fld"><span>Какие объекты проверять</span>
+    <select id="aiStatus">
+      <option value="new">Только новые</option>
+      <option value="">Любые (кроме скрытых)</option>
+      <option value="auto_checked">Уже проверенные — заново</option>
+    </select></label>
+
+  <label class="fld"><span>Сколько за один раз</span>
+    <input type="number" id="aiLimit" min="1" value="10"></label>
+
+  <div class="wasurl" id="aiCost"></div>
+
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+    <button id="aiCancel">Отмена</button>
+    <button id="aiGo" class="primary">Запустить</button>
   </div>
 </dialog>
 

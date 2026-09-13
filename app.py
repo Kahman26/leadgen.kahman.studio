@@ -17,6 +17,7 @@ import db
 import utils
 import pipeline
 import scoring
+from enrich import ai_research
 
 app = FastAPI(title="Сборщик лидов — ниша бронирования", docs_url=None, redoc_url=None)
 db.init()
@@ -89,6 +90,7 @@ def robots():
 
 STATUSES = {
     "new": "Новый",
+    "auto_checked": "Автопроверка",      # Claude поискал, человек ещё не смотрел
     "in_work": "В работе",
     "contacted": "Связались",
     "refused": "Отказ",
@@ -115,6 +117,9 @@ def get_config(request: Request):
         "hot": scoring.HOT,
         "login": getattr(request.state, "login", ""),
         "editable": EDITABLE,
+        "ai_ready": ai_research.available(),
+        "ai_model": config.AI_MODEL,
+        "ai_batch_limit": config.AI_BATCH_LIMIT,
     }
 
 
@@ -429,6 +434,35 @@ def edit_lead(lead_id: int, payload: dict = Body(...)):
 
     # Контакты влияют на балл, поэтому пересчитываем
     return pipeline.rescore_one(lead_id)
+
+
+@app.post("/api/lead/{lead_id}/research")
+def research_one(lead_id: int):
+    """Автопроверка одного объекта: поиск в интернете через Claude."""
+    if not ai_research.available():
+        raise HTTPException(400, "Автопроверка недоступна: не задан ANTHROPIC_API_KEY")
+    if pipeline.state()["running"]:
+        raise HTTPException(409, "Идёт другая операция, дождитесь окончания")
+
+    lead, error = pipeline.research_lead(lead_id)
+    if error:
+        raise HTTPException(502, error)
+    return lead
+
+
+@app.post("/api/research")
+def research_batch(payload: dict = Body(default={})):
+    """Массовая автопроверка. Поиск платный, поэтому пачка ограничена."""
+    if not ai_research.available():
+        raise HTTPException(400, "Автопроверка недоступна: не задан ANTHROPIC_API_KEY")
+    if pipeline.state()["running"]:
+        raise HTTPException(409, "Уже идёт сбор или проверка")
+
+    pipeline.research_async(
+        status=payload.get("status", "new"),
+        limit=payload.get("limit"),
+    )
+    return {"ok": True}
 
 
 @app.post("/api/lead/{lead_id}/unlock")

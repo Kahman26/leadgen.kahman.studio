@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const PAGE = 100;
 
-let CFG = { statuses: {}, reasons: {}, hot: 60 };
+let CFG = { statuses: {}, reasons: {}, hot: 60, ai_batch_limit: 25 };
 let offset = 0;
 let total = 0;
 let statFilter = null;      // быстрый фильтр по клику на карточку статистики
@@ -151,12 +151,12 @@ async function openLead(id) {
     ['Сайт', site ? `<a href="${esc(site)}" target="_blank" rel="noopener">${esc(site)}</a>` : '—'],
     ['Состояние', { ok: 'работает', dead: 'не открывается', none: 'сайта нет',
                     blocked: 'закрыт защитой' }[l.site_status] || '—'],
+    ['Бронирование', l.site_status === 'ok' ? bookingText(l) : '—'],
+    ['Движок', l.cms || '—'],
   ];
   const techMore = [
     ['Код ответа', l.http_code ?? '—'],
     ['Мобильная версия', l.site_status === 'ok' ? (l.mobile_ready ? 'есть' : 'нет') : '—'],
-    ['Бронирование', l.site_status === 'ok' ? bookingText(l) : '—'],
-    ['Движок', l.cms || '—'],
     ['Копирайт', l.copyright_year || '—'],
     ['Загрузка', l.load_ms ? l.load_ms + ' мс' : '—'],
     ['Домен до', l.domain_expires || '—'],
@@ -191,6 +191,7 @@ async function openLead(id) {
         </div>
       </div>
       <div style="display:flex;gap:6px;flex:0 0 auto">
+        <button id="aiLead" title="Найти информацию в интернете через Claude">Проверить</button>
         <button id="editLead" title="Исправить данные карточки">Изменить</button>
         <button class="close" onclick="closeLead()">✕</button>
       </div>
@@ -226,6 +227,31 @@ async function openLead(id) {
       ${cs.length ? `<div class="muted" style="margin-top:6px">Откуда контакт:
         ${cs.map(([k, v]) => `${esc(k)} — ${esc(v)}`).join(', ')}</div>` : ''}
     </div>
+
+    ${l.ai_checked_at || l.ai_error ? `
+    <div class="section">
+      <h3>Что нашёл Claude ${l.ai_checked_at
+          ? `<span class="muted" style="text-transform:none">— ${esc(l.ai_checked_at.slice(0, 10))}</span>` : ''}</h3>
+      ${l.ai_error
+        ? `<div class="wasurl">Не получилось: ${esc(l.ai_error)}</div>`
+        : `
+        ${l.ai_summary ? `<div class="pitch">${esc(l.ai_summary)}</div>` : ''}
+        ${(l.ai_problems || []).length ? `<ul class="missing" style="margin-top:8px">${
+          l.ai_problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+        ${l.ai_found_site ? `<div class="muted" style="margin-top:8px">Найденный сайт:
+          <a href="${esc(l.ai_found_site)}" target="_blank" rel="noopener">${esc(l.ai_found_site)}</a></div>` : ''}
+        ${(l.ai_aggregators || []).length ? `<div class="muted" style="margin-top:6px">Брони идут через:
+          ${l.ai_aggregators.map((a) => a && a.url
+            ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name || a.url)}</a>`
+            : esc((a && a.name) || '')).join(', ')}</div>` : ''}
+        ${(l.ai_sources || []).length ? `<div class="muted" style="margin-top:6px;font-size:12px">
+          Источники: ${l.ai_sources.map((u) =>
+            `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(String(u).replace(/^https?:\/\//, '').slice(0, 28))}</a>`
+          ).join(', ')}</div>` : ''}
+        <div class="muted" style="margin-top:8px;font-size:12px">
+          Это находки поиска, а не проверенные данные — сверьтесь по ссылкам.
+        </div>`}
+    </div>` : ''}
 
     <div class="section">
       <h3>Чего не хватает</h3>
@@ -334,6 +360,20 @@ async function openLead(id) {
     if (value) b.classList.add('on');
     loadLeads();
   });
+
+  $('aiLead').onclick = async () => {
+    $('aiLead').disabled = true;
+    $('aiLead').textContent = 'Ищу…';
+    try {
+      await api(`/api/lead/${id}/research`, { method: 'POST' });
+      await openLead(id);
+      loadLeads(); loadStats();
+    } catch (e) {
+      alert('Автопроверка не удалась: ' + e.message);
+      $('aiLead').disabled = false;
+      $('aiLead').textContent = 'Проверить';
+    }
+  };
 
   $('editLead').onclick = () => openEditor(l);
 
@@ -520,6 +560,9 @@ async function init() {
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
+  $('btnResearch').title = CFG.ai_ready
+    ? `Поиск в интернете через ${CFG.ai_model}`
+    : 'Недоступно: не задан ANTHROPIC_API_KEY';
   $('optDadata').checked = CFG.dadata_ready;
   $('optDadata').disabled = !CFG.dadata_ready;
 
@@ -615,6 +658,45 @@ async function init() {
     }
     $('addGo').disabled = false;
     $('addGo').textContent = 'Добавить';
+  };
+
+  // ── массовая автопроверка ────────────────────────────────────────────
+  const aiCost = () => {
+    const n = Math.max(1, Math.min(Number($('aiLimit').value) || 1, CFG.ai_batch_limit));
+    $('aiLimit').value = n;
+    // Ориентир, а не счёт: поиск $0.01 за запрос плюс токены прочитанных страниц
+    $('aiCost').textContent =
+      `${n} объектов — ориентировочно $${(n * 0.2).toFixed(2)} (${CFG.ai_model}). ` +
+      `За один раз не больше ${CFG.ai_batch_limit}.`;
+  };
+
+  $('btnResearch').onclick = () => {
+    if (!CFG.ai_ready) {
+      alert('Автопроверка недоступна: на сервере не задан ANTHROPIC_API_KEY');
+      return;
+    }
+    $('aiErr').classList.remove('on');
+    aiCost();
+    $('aiDialog').showModal();
+  };
+  $('aiLimit').oninput = aiCost;
+  $('aiCancel').onclick = () => $('aiDialog').close();
+
+  $('aiGo').onclick = async () => {
+    try {
+      await api('/api/research', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: $('aiStatus').value,
+          limit: Number($('aiLimit').value) || 1,
+        }),
+      });
+      $('aiDialog').close();
+      startPolling();
+    } catch (e) {
+      $('aiErr').textContent = e.message;
+      $('aiErr').classList.add('on');
+    }
   };
 
   $('btnImport').onclick = () => $('fileInput').click();

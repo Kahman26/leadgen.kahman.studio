@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS leads (
     status          TEXT DEFAULT 'new',  -- new | in_work | contacted | refused | deal
     note            TEXT DEFAULT '',
     priority        INTEGER,             -- оценка 1–10, которую ставит человек
+
+    -- что нашла автопроверка через Claude
+    ai_summary      TEXT DEFAULT '',     -- короткий рассказ про бизнес
+    ai_problems     TEXT DEFAULT '',     -- JSON-список проблем
+    ai_sources      TEXT DEFAULT '',     -- JSON-список ссылок, откуда это взято
+    ai_found_site   TEXT DEFAULT '',     -- найденный актуальный сайт
+    ai_aggregators  TEXT DEFAULT '',     -- JSON: где принимает брони (Суточно и т.п.)
+    ai_checked_at   TEXT DEFAULT '',
+    ai_model        TEXT DEFAULT '',
+    ai_error        TEXT DEFAULT '',
+
     hidden          INTEGER DEFAULT 0,   -- убран из списка (закрылись и т.п.)
     hidden_reason   TEXT DEFAULT '',
 
@@ -156,6 +167,14 @@ MIGRATIONS = [
     ("dadata_match", "TEXT DEFAULT ''"),
     ("manual_fields", "TEXT DEFAULT ''"),
     ("priority", "INTEGER"),
+    ("ai_summary", "TEXT DEFAULT ''"),
+    ("ai_problems", "TEXT DEFAULT ''"),
+    ("ai_sources", "TEXT DEFAULT ''"),
+    ("ai_found_site", "TEXT DEFAULT ''"),
+    ("ai_aggregators", "TEXT DEFAULT ''"),
+    ("ai_checked_at", "TEXT DEFAULT ''"),
+    ("ai_model", "TEXT DEFAULT ''"),
+    ("ai_error", "TEXT DEFAULT ''"),
 ]
 
 
@@ -236,18 +255,29 @@ def upsert(lead: dict) -> str:
     return "added"
 
 
-def manual_list(value):
-    """Разбирает JSON-список исправленных полей. Битые данные не должны ломать сбор."""
+def json_list(value):
+    """Разбирает JSON-список как есть. Битые данные не должны ломать сбор."""
     try:
         parsed = json.loads(value or "[]")
-        return [str(x) for x in parsed] if isinstance(parsed, list) else []
+        return parsed if isinstance(parsed, list) else []
     except (ValueError, TypeError):
         return []
+
+
+def manual_list(value):
+    """Список имён полей: элементы приводим к строке.
+
+    Для списков объектов (например, площадок бронирования) это не подходит —
+    там нужен json_list, иначе словари превратятся в строки.
+    """
+    return [str(x) for x in json_list(value)]
 
 
 def row_to_dict(r: sqlite3.Row) -> dict:
     d = dict(r)
     d["manual_fields"] = manual_list(d.get("manual_fields"))
+    for f in ("ai_problems", "ai_sources", "ai_aggregators"):
+        d[f] = json_list(d.get(f))
     for f in ("phones", "missing", "contact_source"):
         if d.get(f):
             try:

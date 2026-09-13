@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import config
 import db
 import scoring
-from enrich import dadata_lookup, site_audit, whois_check
+import utils
+from enrich import ai_research, dadata_lookup, site_audit, whois_check
 from sources import dadata, overpass
 
 # ── состояние запуска для веб-интерфейса ─────────────────────────────────────
@@ -263,6 +264,157 @@ def recheck_lead(lead_id, drop_site_contacts=False):
 AUDIT_FIELDS = ("site_status", "http_code", "https", "mobile_ready", "online_booking",
                 "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
                 "final_url")
+
+
+def _clean(value):
+    value = (value or "").strip() if isinstance(value, str) else ""
+    return "" if value.lower() in ("null", "none", "нет", "не найдено") else value
+
+
+def apply_research(lead_id, found):
+    """Записывает результат автопроверки. Ничего не затирает молча.
+
+    Контакты ставятся только в пустые поля и помечаются источником «Claude» —
+    маркетолог должен видеть, что это не подтверждённые данные, а находка,
+    которую он собирается проверить. Поля, исправленные руками, не трогаем.
+    """
+    c = db.conn()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        return None
+    lead = db.row_to_dict(row)
+    protected = set(lead.get("manual_fields") or [])
+
+    contacts = found.get("contacts") or {}
+    director = found.get("director") or {}
+    changes = {
+        "ai_summary": _clean(found.get("summary")),
+        "ai_problems": json.dumps([p for p in (found.get("problems") or []) if p],
+                                  ensure_ascii=False),
+        "ai_sources": json.dumps([s for s in (found.get("sources") or []) if s][:12],
+                                 ensure_ascii=False),
+        "ai_aggregators": json.dumps(found.get("aggregators") or [], ensure_ascii=False),
+        "ai_found_site": _clean(found.get("website")),
+        "ai_checked_at": db.now(),
+        "ai_model": found.get("_model") or config.AI_MODEL,
+        "ai_error": "",
+        "status": "auto_checked",
+    }
+
+    source = dict(lead.get("contact_source") or {})
+    for field, key in (("phone", "phone"), ("telegram", "telegram"),
+                       ("vk", "vk"), ("email", "email")):
+        value = _clean(contacts.get(key))
+        if not value or lead.get(field) or field in protected:
+            continue                       # своё и ручное важнее найденного
+        if field == "phone":
+            phones = utils.split_phones(value)
+            value = phones[0] if phones else ""
+        elif field == "telegram":
+            value = value.lstrip("@").split("/")[-1]
+        elif field == "vk":
+            value = value.rstrip("/").split("/")[-1]
+        if value:
+            changes[field] = value
+            source[field] = "Claude"
+
+    boss = _clean(director.get("name"))
+    if boss and not lead.get("director") and "director" not in protected:
+        changes["director"] = boss
+        changes["director_post"] = _clean(director.get("post"))
+
+    changes["contact_source"] = json.dumps(source, ensure_ascii=False)
+
+    # Новый адрес ставим, только если своего рабочего нет: у живого сайта
+    # менять адрес по находке модели нельзя.
+    new_site = _clean(found.get("website"))
+    replace_site = (new_site and "website" not in protected
+                    and utils.looks_like_url(new_site)
+                    and new_site.rstrip("/") != (lead.get("website") or "").rstrip("/")
+                    and lead.get("site_status") in ("none", "dead", "blocked"))
+    if replace_site:
+        changes["previous_website"] = lead.get("website") or lead.get("previous_website") or ""
+        changes["website"] = utils.decode_idna(new_site)
+        changes["website_manual"] = 1      # сбор не должен вернуть мёртвый адрес
+
+    sets = ", ".join(f"{f}=?" for f in changes)
+    c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
+              list(changes.values()) + [db.now(), lead_id])
+    c.commit()
+
+    # Сайт сменился — перепроверяем его и пересчитываем балл
+    return recheck_lead(lead_id) if replace_site else rescore_one(lead_id)
+
+
+def research_lead(lead_id):
+    """Автопроверка одного лида: поиск в интернете + запись результата."""
+    c = db.conn()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        return None, "Лид не найден"
+
+    found, error = ai_research.research(db.row_to_dict(row))
+    if error:
+        c.execute("UPDATE leads SET ai_error=?, ai_checked_at=?, updated_at=? WHERE id=?",
+                  (error, db.now(), db.now(), lead_id))
+        c.commit()
+        return None, error
+
+    return apply_research(lead_id, found), ""
+
+
+def research_many(status="new", limit=None):
+    """Прогоняет автопроверку по нескольким лидам с показом хода работы."""
+    limit = min(int(limit or config.AI_BATCH_LIMIT), config.AI_BATCH_LIMIT)
+
+    with _lock:
+        if _state["running"]:
+            return
+        _state.update(running=True, log=[], done=0, total=0, error=None)
+
+    try:
+        where = "WHERE COALESCE(hidden,0)=0"
+        params = []
+        if status:
+            where += " AND status=?"
+            params.append(status)
+
+        rows = db.conn().execute(
+            f"SELECT id, name FROM leads {where} "
+            "ORDER BY COALESCE(priority,0) DESC, score DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+
+        with _lock:
+            _state["total"] = len(rows)
+        _log(f"Автопроверка: {len(rows)} объектов, модель {config.AI_MODEL}")
+
+        ok = failed = 0
+        for i, r in enumerate(rows, 1):
+            _log(f"[{i}/{len(rows)}] {r['name'][:40]}")
+            _, error = research_lead(r["id"])
+            if error:
+                failed += 1
+                _log(f"    не получилось: {error[:80]}")
+            else:
+                ok += 1
+            with _lock:
+                _state["done"] = i
+
+        _log(f"Готово: проверено {ok}, с ошибкой {failed}")
+    except Exception as exc:
+        with _lock:
+            _state["error"] = str(exc)
+        _log(f"Ошибка автопроверки: {exc}")
+    finally:
+        with _lock:
+            _state["running"] = False
+
+
+def research_async(**kw):
+    t = threading.Thread(target=research_many, kwargs=kw, daemon=True)
+    t.start()
+    return t
 
 
 def rescore_one(lead_id):
