@@ -88,6 +88,93 @@ CMS_MARKERS = {
 # Конструкторы-визитки: почти всегда означают «сайт сделан на коленке».
 CHEAP_BUILDERS = {"Wix", "uKit", "uCoz", "Nethouse", "A5", "Setup.ru", "Jimdo", "Мегагрупп"}
 
+# ── Домен отвечает, но сайта компании на нём больше нет ──────────────────────
+# Самый неприятный для нас случай: страница отдаёт 200, проверка считает сайт
+# живым, лид получает низкий балл и уходит вниз списка. А на деле там парковка
+# с партнёрскими ссылками, объявление о продаже домена или пустая страница.
+# Для отеля это ровно то же самое, что не иметь сайта, — и это как раз горячий
+# лид, а не спокойный.
+
+PARKING_SERVICES = re.compile(
+    r"snparking|sedoparking|parkingcrew|bodis\.com|afternic|dan\.com", re.I)
+
+SALE_WORDS = re.compile(
+    r"домен\s+прода[её]тся|продажа\s+домена|этот\s+домен\s+(?:можно\s+купить|выставлен)|"
+    r"domain\s+(?:is\s+)?for\s+sale|купить\s+этот\s+домен", re.I)
+
+# Куда уводят парковки: агрегаторы (часто с партнёрской меткой) и биржи доменов.
+OFFSITE_HOSTS = re.compile(
+    r"(?:^|\.)(?:ostrovok\.ru|aviasales\.[a-z]+|hotellook\.[a-z]+|tp\.media|"
+    r"travelpayouts\.com|sutochno\.ru|101hotels\.com|tvil\.ru|poisk-oteli\.ru|"
+    r"bronevik\.com|yandex\.ru|reg\.ru|nic\.ru|sedo\.com)$", re.I)
+
+# Мета-обновление пишут и как content="0;url=...", и как content="0;https://..."
+RE_META_REFRESH_URL = re.compile(
+    r"(?:url\s*=\s*)?['\"]?((?:https?:)?//[^'\";>\s]+|/[^'\";>\s]+)", re.I)
+RE_JS_REDIRECT = re.compile(
+    r"(?:window\.)?location(?:\.href)?\s*=\s*['\"]([^'\"]+)['\"]")
+
+# Размер, ниже которого страница не может быть настоящим сайтом отеля.
+# Парковки укладываются в 1.5–2 КБ, самый скромный реальный сайт — десятки.
+PARKING_MAX_BYTES = 8000
+
+
+def _bare_host(url):
+    # urlparse без схемы считает весь адрес путём и отдаёт пустой hostname,
+    # поэтому схему при необходимости подставляем.
+    host = (urlparse(normalize_url(url)).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _redirect_target(html, soup):
+    """Куда страница уводит посетителя мета-обновлением или скриптом.
+
+    Ни то, ни другое requests не выполняет — для него страница «открылась».
+    А живой человек по такой ссылке уезжает и сайта компании не видит.
+    """
+    tag = soup.find("meta", attrs={"http-equiv": re.compile("^refresh$", re.I)})
+    if tag:
+        m = RE_META_REFRESH_URL.search(tag.get("content") or "")
+        if m:
+            return m.group(1)
+    m = RE_JS_REDIRECT.search(html)
+    return m.group(1) if m else ""
+
+
+def parked_reason(html, soup, text, final_url, asked_url):
+    """Почему на домене нет сайта компании. Пустая строка — сайт настоящий."""
+    if PARKING_SERVICES.search(html):
+        return "служебная парковка домена"
+
+    if len(html) < 20000 and SALE_WORDS.search(text):
+        return "домен выставлен на продажу"
+
+    # Пустая страница. Сайты-конструкторы рисуют содержимое скриптом, и для
+    # робота они тоже «пустые» — их сюда записывать нельзя, это чей-то рабочий
+    # (пусть и убогий) сайт. Поэтому пустой считаем только страницу, где нет
+    # вообще ничего: ни содержимого, ни скриптов, которые его подгрузят.
+    if (len(text.strip()) < 20
+            and not soup.find(["form", "img", "video", "iframe"])
+            and not soup.find("script", src=True)):
+        return "страница пустая: сервер отвечает, но содержимого нет"
+
+    asked, final = _bare_host(asked_url), _bare_host(final_url)
+
+    target = _redirect_target(html, soup)
+    if target and len(html) < PARKING_MAX_BYTES:
+        thost = _bare_host(urljoin(final_url, target))
+        if thost and thost != final:
+            where = "агрегатор" if OFFSITE_HOSTS.search(thost) else thost
+            return f"страница-переадресация на {where}"
+
+    # Обычный HTTP-редирект, но уводит он на чужую площадку, а не на свой
+    # новый домен. Переезд на свой домен — это нормально и парковкой не считается.
+    if final and asked and final != asked and OFFSITE_HOSTS.search(final):
+        return f"домен переадресован на {final}"
+
+    return ""
+
+
 # ── Контакты ─────────────────────────────────────────────────────────────────
 # Границы (?<!\d) / (?!\d) обязательны: без них шаблон выхватывает куски
 # случайных цифровых последовательностей из скриптов и id — и маркетолог
@@ -333,7 +420,7 @@ def audit(url):
     res = {
         "site_status": "dead", "http_code": None, "https": 0, "mobile_ready": 0,
         "online_booking": 0, "booking_type": "none", "booking_engine": "",
-        "cms": "", "copyright_year": 0,
+        "cms": "", "copyright_year": 0, "parked_reason": "",
         "load_ms": None, "final_url": "", "contacts": {}, "error": "",
     }
     url = normalize_url(url)
@@ -389,12 +476,20 @@ def audit(url):
             res["http_code"] = resp.status_code
             res["final_url"] = utils.decode_idna(resp.url)
 
-    res["site_status"] = "ok"
-
     try:
         soup = BeautifulSoup(html, "lxml")
     except Exception:
         soup = BeautifulSoup(html, "html.parser")
+
+    # Домен может отвечать, но сайта компании на нём уже не быть. Проверяем
+    # это до остального аудита: мерить адаптивность у парковки бессмысленно.
+    parked = parked_reason(html, soup, soup.get_text(" ", strip=True), resp.url, url)
+    if parked:
+        res["site_status"] = "parked"
+        res["parked_reason"] = parked
+        return res
+
+    res["site_status"] = "ok"
 
     # Адаптивность: без viewport сайт на телефоне — уменьшенный десктоп.
     vp = soup.find("meta", attrs={"name": re.compile("^viewport$", re.I)})

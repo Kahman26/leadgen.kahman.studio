@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS leads (
     -- сайт и его состояние
     website         TEXT,
     final_url       TEXT,
-    site_status     TEXT,                -- none | dead | ok
+    site_status     TEXT,                -- none | dead | parked | blocked | ok
+    parked_reason   TEXT DEFAULT '',     -- почему домен отвечает, но сайта нет
     http_code       INTEGER,
     https           INTEGER,
     mobile_ready    INTEGER,
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS leads (
     ai_checked_at   TEXT DEFAULT '',
     ai_model        TEXT DEFAULT '',
     ai_error        TEXT DEFAULT '',
+    ai_company      TEXT DEFAULT '',     -- JSON: реквизиты по версии поиска
 
     hidden          INTEGER DEFAULT 0,   -- убран из списка (закрылись и т.п.)
     hidden_reason   TEXT DEFAULT '',
@@ -205,6 +207,8 @@ MIGRATIONS = [
     ("ai_checked_at", "TEXT DEFAULT ''"),
     ("ai_model", "TEXT DEFAULT ''"),
     ("ai_error", "TEXT DEFAULT ''"),
+    ("ai_company", "TEXT DEFAULT ''"),
+    ("parked_reason", "TEXT DEFAULT ''"),
 ]
 
 

@@ -142,6 +142,7 @@ def process_lead(lead, do_whois=False, do_dadata=False):
         "copyright_year": audit["copyright_year"] or None,
         "load_ms": audit["load_ms"],
         "final_url": audit["final_url"],
+        "parked_reason": audit.get("parked_reason") or "",
     })
 
     if do_whois and audit["site_status"] in ("ok", "blocked"):
@@ -263,7 +264,7 @@ def recheck_lead(lead_id, drop_site_contacts=False):
 
 AUDIT_FIELDS = ("site_status", "http_code", "https", "mobile_ready", "online_booking",
                 "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
-                "final_url")
+                "final_url", "parked_reason")
 
 
 def _clean(value):
@@ -287,6 +288,7 @@ def apply_research(lead_id, found):
 
     contacts = found.get("contacts") or {}
     director = found.get("director") or {}
+    company = found.get("company") or {}
     changes = {
         "ai_summary": _clean(found.get("summary")),
         "ai_problems": json.dumps([p for p in (found.get("problems") or []) if p],
@@ -295,6 +297,7 @@ def apply_research(lead_id, found):
                                  ensure_ascii=False),
         "ai_aggregators": json.dumps(found.get("aggregators") or [], ensure_ascii=False),
         "ai_found_site": _clean(found.get("website")),
+        "ai_company": json.dumps(company, ensure_ascii=False) if company else "",
         "ai_checked_at": db.now(),
         "ai_model": found.get("_model") or "чат",
         "ai_error": "",
@@ -325,6 +328,26 @@ def apply_research(lead_id, found):
         post = _clean(director.get("post"))
         changes["ai_director"] = f"{boss}, {post}" if post else boss
 
+    # Реквизиты из поиска кладём только в пустые поля. Данные Dadata точнее:
+    # затирать сверку с ЕГРЮЛ находкой из выдачи нельзя.
+    for field, key in (("inn", "inn"), ("ogrn", "ogrn"),
+                       ("org_name", "legal_name"),
+                       ("legal_address", "legal_address"), ("address", "address")):
+        value = _clean(company.get(key))
+        if value and not lead.get(field) and field not in protected:
+            changes[field] = value
+
+    # Дополнительные телефоны дописываем к уже известным, не теряя старые.
+    extra_phones = [p for p in (company.get("phones") or []) if _clean(p)]
+    if extra_phones:
+        known = list(lead.get("phones") or [])
+        for raw in extra_phones:
+            for p in utils.split_phones(raw):
+                if p and p not in known:
+                    known.append(p)
+        if known != list(lead.get("phones") or []):
+            changes["phones"] = json.dumps(known[:12], ensure_ascii=False)
+
     changes["contact_source"] = json.dumps(source, ensure_ascii=False)
 
     # Новый адрес ставим, только если своего рабочего нет: у живого сайта
@@ -333,7 +356,7 @@ def apply_research(lead_id, found):
     replace_site = (new_site and "website" not in protected
                     and utils.looks_like_url(new_site)
                     and new_site.rstrip("/") != (lead.get("website") or "").rstrip("/")
-                    and lead.get("site_status") in ("none", "dead", "blocked"))
+                    and lead.get("site_status") in ("none", "dead", "blocked", "parked"))
     if replace_site:
         changes["previous_website"] = lead.get("website") or lead.get("previous_website") or ""
         changes["website"] = utils.decode_idna(new_site)

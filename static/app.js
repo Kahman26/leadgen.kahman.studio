@@ -149,8 +149,10 @@ async function openLead(id) {
   // Наверху только то, что нужно каждый раз; остальное — под кнопкой
   const tech = [
     ['Сайт', site ? `<a href="${esc(site)}" target="_blank" rel="noopener">${esc(site)}</a>` : '—'],
-    ['Состояние', { ok: 'работает', dead: 'не открывается', none: 'сайта нет',
-                    blocked: 'закрыт защитой' }[l.site_status] || '—'],
+    ['Состояние', l.site_status === 'parked'
+        ? `сайта компании нет${l.parked_reason ? ': ' + esc(l.parked_reason) : ''}`
+        : ({ ok: 'работает', dead: 'не открывается', none: 'сайта нет',
+             blocked: 'закрыт защитой' }[l.site_status] || '—')],
     ['Бронирование', l.site_status === 'ok' ? bookingText(l) : '—'],
     ['Движок', l.cms || '—'],
   ];
