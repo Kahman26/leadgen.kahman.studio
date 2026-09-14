@@ -157,6 +157,24 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 
 
+-- Журнал изменений: кто, когда и что поменял. Пишется на уровне приложения,
+-- а не триггером: триггер не знает, какой человек вошёл, а именно это и нужно,
+-- когда разбираешь чужую ошибку. Имя объекта продублировано намеренно —
+-- лид могут переименовать, а лента должна читаться и через полгода.
+CREATE TABLE IF NOT EXISTS history (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        INTEGER NOT NULL,      -- unix-время, UTC
+    login     TEXT NOT NULL,         -- кто; @system — сбор и перепроверка
+    lead_id   INTEGER,               -- NULL у общих действий: импорт, запуск сбора
+    lead_name TEXT DEFAULT '',
+    action    TEXT NOT NULL,
+    field     TEXT DEFAULT '',
+    old_value TEXT DEFAULT '',
+    new_value TEXT DEFAULT '',
+    reverted  INTEGER DEFAULT 0      -- эту правку уже вернули назад
+);
+
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT,
@@ -191,6 +209,9 @@ CREATE INDEX IF NOT EXISTS idx_leads_priority ON leads(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refs_category ON refs(category);
 CREATE INDEX IF NOT EXISTS idx_activity_login ON activity(login, started);
+CREATE INDEX IF NOT EXISTS idx_history_lead  ON history(lead_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_history_ts    ON history(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_history_login ON history(login, ts DESC);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
@@ -298,9 +319,10 @@ def upsert(lead: dict) -> str:
     lead = dict(lead)
     lead["updated_at"] = now()
 
+    # Тянем строку целиком: журналу нужны прежние значения, чтобы записать,
+    # что именно переписал сбор.
     row = c.execute(
-        "SELECT id, website_manual, manual_fields FROM leads "
-        "WHERE source=? AND source_ref=?",
+        "SELECT * FROM leads WHERE source=? AND source_ref=?",
         (lead.get("source"), lead.get("source_ref")),
     ).fetchone()
 
@@ -317,17 +339,26 @@ def upsert(lead: dict) -> str:
         vals = [lead[f] for f in fields] + [lead["updated_at"], row["id"]]
         c.execute(f"UPDATE leads SET {sets} WHERE id=?", vals)
         c.commit()
+        # Импорт внутри функции: history знает про db, и на уровне модуля
+        # получился бы круг.
+        import history
+        history.log_changes(history.SYSTEM, row,
+                            {f: lead[f] for f in fields},
+                            action="recheck", only=history.WATCHED)
         return "updated"
 
     lead["created_at"] = lead["updated_at"]
     fields = [f for f in UPSERT_FIELDS + ["source", "source_ref", "created_at", "updated_at"]
               if f in lead]
     ph = ", ".join("?" * len(fields))
-    c.execute(
+    cur = c.execute(
         f"INSERT INTO leads ({', '.join(fields)}) VALUES ({ph})",
         [lead[f] for f in fields],
     )
     c.commit()
+    import history
+    history.log(history.SYSTEM, "create", lead=cur.lastrowid,
+                new=lead.get("name") or "")
     return "added"
 
 

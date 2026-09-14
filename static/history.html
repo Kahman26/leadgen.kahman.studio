@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Журнал изменений — сборщик лидов</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Журнал изменений</h1>
+  <span class="city">кто и что менял в базе</span>
+  <span class="spacer"></span>
+  <a class="btn" href="/activity">Рабочее время</a>
+  <a class="btn" href="/">← К лидам</a>
+</header>
+
+<div class="wrap">
+
+  <div class="filters">
+    <input type="search" id="q" placeholder="Название объекта">
+    <select id="fPerson"><option value="">Все</option></select>
+    <select id="fAction"><option value="">Любое действие</option></select>
+    <input type="date" id="fSince" title="С какого дня">
+    <input type="date" id="fUntil" title="По какой день">
+    <label class="checkline" title="Показать изменения, сделанные сбором и перепроверкой">
+      <input type="checkbox" id="fSystem"> сбор
+    </label>
+    <span class="muted" id="count"></span>
+  </div>
+
+  <div id="body"><div class="empty">Загружаем…</div></div>
+
+  <div class="pager">
+    <button id="prev" disabled>← Новее</button>
+    <span class="muted" id="page"></span>
+    <button id="next" disabled>Старее →</button>
+  </div>
+
+</div>
+
+<script src="/static/heartbeat.js"></script>
+<script src="/static/histview.js"></script>
+<script src="/static/history.js"></script>
+</body>
+</html>

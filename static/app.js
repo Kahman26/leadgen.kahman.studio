@@ -141,6 +141,51 @@ async function loadLeads() {
 
 /* ── карточка лида ────────────────────────────────────────────────────── */
 
+// В карточке показываем последние правки. Полная лента по всем объектам —
+// на отдельной странице, сюда её тащить незачем.
+const HISTORY_IN_CARD = 6;
+
+// Изменения от сбора в карточке по умолчанию не показываем: одна
+// перепроверка сайта даёт две строки и вытесняет то, что делал человек.
+let histSystem = false;
+
+async function loadLeadHistory(id, all) {
+  const box = $('leadHistory');
+  if (!box) return;
+  let data;
+  try {
+    data = await api(`/api/lead/${id}/history?system=${histSystem ? 1 : 0}`);
+  } catch (e) {
+    box.innerHTML = `<span class="muted">не удалось загрузить: ${esc(e.message)}</span>`;
+    return;
+  }
+
+  const toggle = `<button class="linkbtn" id="histSys">${
+    histSystem ? 'без изменений от сбора' : 'показать изменения от сбора'}</button>`;
+
+  if (!data.rows.length) {
+    box.innerHTML = '<span class="muted">Изменений пока не было</span> ' + toggle;
+  } else {
+    const rows = all ? data.rows : data.rows.slice(0, HISTORY_IN_CARD);
+    const rest = data.rows.length - rows.length;
+    box.innerHTML = rows.map((e) =>
+        HistView.row(e, { canUndo: data.can_undo })).join('')
+      + `<div class="histfoot">${
+          rest ? `<button class="linkbtn" id="histMore">Ещё ${rest}</button>` : ''
+        }${toggle}</div>`;
+  }
+
+  HistView.wireUndo(box, api, async () => {
+    await openLead(id);            // значения в карточке тоже изменились
+    loadLeads();
+  });
+  if ($('histMore')) $('histMore').onclick = () => loadLeadHistory(id, true);
+  $('histSys').onclick = () => {
+    histSystem = !histSystem;
+    loadLeadHistory(id, all);
+  };
+}
+
 async function openLead(id) {
   const l = await api('/api/lead/' + id);
   const site = l.final_url || l.website;
@@ -318,6 +363,11 @@ async function openLead(id) {
       <span class="muted" id="noteSaved"></span>
     </div>
 
+    <div class="section">
+      <h3>История изменений</h3>
+      <div id="leadHistory" class="muted">загружаем…</div>
+    </div>
+
     <div class="dangerzone">
       ${l.hidden ? `
         <div class="hiddenbanner">
@@ -361,6 +411,8 @@ async function openLead(id) {
     if (value) b.classList.add('on');
     loadLeads();
   });
+
+  loadLeadHistory(id);
 
   $('aiLead').onclick = () => openResearch(l);
 
@@ -610,11 +662,15 @@ function startPolling() {
 
 async function init() {
   CFG = await api('/api/config');
+  // Журналу нужны подписи полей и названия статусов, а живёт он
+  // в отдельном файле и до модульной переменной не дотянется.
+  window.CFG = CFG;
   $('cityLabel').textContent = CFG.city + ' · ниша бронирования';
   $('who').textContent = CFG.login || '';
   // Отчёт по сотрудникам — только владельцу базы. Сервер всё равно
   // проверит права, но и показывать чужую кнопку незачем.
   $('mnActivity').hidden = !CFG.is_admin;
+  $('mnHistory').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
@@ -625,6 +681,10 @@ async function init() {
 
   await loadStats();
   await loadLeads();
+
+  // Из журнала приходят по ссылке на конкретный объект
+  const wanted = new URLSearchParams(location.search).get('lead');
+  if (wanted) openLead(Number(wanted));
 
   const rerun = () => { offset = 0; statFilter = null; loadLeads(); loadStats(); };
   let t;

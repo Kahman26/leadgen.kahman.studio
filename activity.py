@@ -36,13 +36,13 @@ TAIL = BEAT
 
 # ── местное время ────────────────────────────────────────────────────────────
 
-def _local(ts):
-    """unix-время → datetime в часовом поясе города."""
+def local(ts):
+    """unix-время → datetime в часовом поясе города. Нужен и журналу."""
     return EPOCH + timedelta(seconds=ts + config.TZ_OFFSET_HOURS * 3600)
 
 
 def _day_of(ts):
-    return _local(ts).date().isoformat()
+    return local(ts).date().isoformat()
 
 
 def _day_bounds(day):
@@ -123,7 +123,7 @@ def _fetch(login, since, until):
 
 
 def _hhmm(ts):
-    return _local(ts).strftime("%H:%M")
+    return local(ts).strftime("%H:%M")
 
 
 def report(login=None, since=None, until=None):
@@ -159,7 +159,7 @@ def report(login=None, since=None, until=None):
             # Отрезок из будущего (часы сотрудника ушли вперёд) не должен
             # навсегда подсвечивать человека как сидящего в базе.
             "online": bool(last and last["e"] and 0 <= now - last["e"] <= PAUSE),
-            "last_seen": _local(last["e"]).strftime("%d.%m %H:%M")
+            "last_seen": local(last["e"]).strftime("%d.%m %H:%M")
                          if last and last["e"] else "",
         })
     return people_out

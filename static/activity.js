@@ -28,6 +28,15 @@ function hours(sec) {
   return m ? `${h} ч ${m} мин` : `${h} ч`;
 }
 
+// Русские числительные: 1 правка, 2 правки, 5 правок
+function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100;
+  if (a > 10 && a < 20) return many;
+  const b = a % 10;
+  if (b === 1) return one;
+  return b > 1 && b < 5 ? few : many;
+}
+
 function dayLabel(iso) {
   const d = new Date(iso + 'T00:00:00');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -35,23 +44,26 @@ function dayLabel(iso) {
   return `${dd}.${mm}, ${WEEKDAYS[d.getDay()]}`;
 }
 
-function dayRow(d, longest) {
+function dayRow(d, longest, login) {
   // Полоса показывает день относительно самого длинного в выборке: так сразу
   // видно, где смена была полной, а где человек заглянул на десять минут.
   const width = longest ? Math.max(2, Math.round(d.seconds / longest * 100)) : 0;
   const spans = d.intervals
     .map((i) => `<span class="chip" title="${hours(i.seconds)}">${esc(i.from)}–${esc(i.to)}</span>`)
     .join(' ');
+  // «Сидел 6 часов» само по себе ничего не значит. Ссылка ведёт в журнал
+  // за этот день по этому человеку — там видно, что он за это время сделал.
+  const link = `/history?login=${encodeURIComponent(login)}&day=${d.day}`;
   return `
     <tr>
-      <td class="day">${dayLabel(d.day)}</td>
+      <td class="day"><a href="${link}" title="Что он делал в этот день">${dayLabel(d.day)}</a></td>
       <td class="num sum">${hours(d.seconds)}</td>
       <td class="barcell"><i style="width:${width}%"></i></td>
       <td><div class="chips">${spans}</div></td>
     </tr>`;
 }
 
-function personBlock(p) {
+function personBlock(p, edits) {
   if (!p.days.length) {
     return `<div class="person">
       <div class="personhead"><h2>${esc(p.login)}</h2>
@@ -72,15 +84,17 @@ function personBlock(p) {
         ${mark}
         <span class="spacer"></span>
         <span class="total">${hours(p.total)}</span>
-        <span class="muted">за ${workdays} ${workdays === 1 ? 'день' : 'дн.'}
-          · в среднем ${hours(Math.round(p.total / workdays))} в день</span>
+        <span class="muted">за ${workdays} ${plural(workdays, 'день', 'дня', 'дней')}
+          · в среднем ${hours(Math.round(p.total / workdays))} в день${
+          edits ? ` · ${edits.edits} ${plural(edits.edits, 'правка', 'правки', 'правок')}
+          по ${edits.leads} ${plural(edits.leads, 'объекту', 'объектам', 'объектам')}` : ''}</span>
       </div>
       <div class="tablebox">
         <table>
           <thead><tr>
             <th>День</th><th class="num">Итого</th><th></th><th>Промежутки работы</th>
           </tr></thead>
-          <tbody>${p.days.map((d) => dayRow(d, longest)).join('')}</tbody>
+          <tbody>${p.days.map((d) => dayRow(d, longest, p.login)).join('')}</tbody>
         </table>
       </div>
     </div>`;
@@ -109,7 +123,7 @@ async function load() {
   $('range').textContent = `${dayLabel(data.since)} — ${dayLabel(data.until)}`;
 
   $('body').innerHTML = data.report.length
-    ? data.report.map(personBlock).join('')
+    ? data.report.map((p) => personBlock(p, (data.edits || {})[p.login])).join('')
     : '<div class="empty">За этот период в базе никто не работал</div>';
 }
 

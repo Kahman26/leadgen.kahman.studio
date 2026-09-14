@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 import db
+import history
 import scoring
 import utils
 from enrich import dadata_lookup, site_audit, whois_check
@@ -258,6 +259,11 @@ def recheck_lead(lead_id, drop_site_contacts=False):
     c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
               [processed[f] for f in fields] + [db.now(), lead_id])
     c.commit()
+
+    # Перепроверка идёт мимо upsert, поэтому журнал зовём здесь же: иначе
+    # смена состояния сайта окажется единственным изменением без автора.
+    history.log_changes(history.SYSTEM, row, {f: processed[f] for f in fields},
+                        action="recheck", only=history.WATCHED)
 
     return db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone())
 

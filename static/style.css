@@ -432,3 +432,47 @@ a.btn:hover { text-decoration: none; }
 .barcell { width: 170px; }
 .barcell i { display: block; height: 8px; border-radius: 999px; background: var(--accent); }
 @media (max-width: 760px) { .barcell { display: none; } .person th:nth-child(3) { display: none; } }
+
+/* ── журнал изменений ───────────────────────────────────────────────────── */
+.hday {
+  font-size: 12px; color: var(--muted); font-weight: 600;
+  margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.hday:first-child { margin-top: 0; }
+
+.hrow {
+  position: relative; padding: 8px 88px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hrow:last-child { border-bottom: none; }
+/* Откатанная правка остаётся в журнале, но перестаёт быть текущим положением
+   дел — приглушаем её, чтобы не читалась как действующее значение. */
+.hrow.reverted { opacity: .55; }
+.hrow.reverted .hbody { text-decoration: line-through; }
+
+.hmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline;
+  font-size: 12px; color: var(--muted); }
+.hmeta .hwho { font-weight: 600; color: var(--ink); }
+.hmeta .hwho.sys { font-weight: 400; color: var(--muted); font-style: italic; }
+.hmeta .hlead { color: var(--link); }
+.hbody { margin-top: 2px; overflow-wrap: anywhere; }
+.hbody .harrow { color: var(--muted); padding: 0 2px; }
+.hempty { color: var(--muted); font-style: normal; }
+
+/* Кнопка отката висит справа и не растягивает строку */
+.hundo, .hdone {
+  position: absolute; right: 0; top: 8px;
+  font-size: 12px; white-space: nowrap;
+}
+.hundo { padding: 3px 9px; }
+.hdone { color: var(--muted); }
+
+.checkline { display: flex; align-items: center; gap: 5px; white-space: nowrap;
+  flex: 0 0 auto; font-size: 13px; color: var(--muted); }
+.pager { display: flex; gap: 10px; align-items: center; justify-content: center;
+  margin-top: 16px; }
+
+/* В карточке журнал узкий: кнопку отката переносим под строку */
+.side .hrow { padding-right: 0; }
+.side .hundo, .side .hdone { position: static; display: inline-block; margin-top: 4px; }
+.histfoot { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }

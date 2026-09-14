@@ -15,6 +15,7 @@ import activity
 import auth
 import config
 import db
+import history
 import utils
 import pipeline
 import refs
@@ -120,6 +121,7 @@ def get_config(request: Request):
         "login": getattr(request.state, "login", ""),
         "is_admin": auth.is_admin(getattr(request.state, "login", "")),
         "editable": EDITABLE,
+        "field_labels": FIELD_LABELS,
 
     }
 
@@ -239,8 +241,14 @@ def get_lead(lead_id: int):
     return db.row_to_dict(r)
 
 
+# Каким действием журнала записать правку каждого поля: «скрыт» и «статус»
+# читаются в ленте куда быстрее, чем безликое «правка поля».
+UPDATE_ACTIONS = {"status": "status", "priority": "priority",
+                  "note": "note", "hidden_reason": "hide"}
+
+
 @app.post("/api/lead/{lead_id}")
-def update_lead(lead_id: int, payload: dict = Body(...)):
+def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     fields = {k: v for k, v in payload.items()
               if k in ("status", "note", "hidden", "hidden_reason", "priority")}
     if "hidden" in fields:
@@ -261,11 +269,23 @@ def update_lead(lead_id: int, payload: dict = Body(...)):
         raise HTTPException(400, "Нечего обновлять")
     if "status" in fields and fields["status"] not in STATUSES:
         raise HTTPException(400, "Неизвестный статус")
-    sets = ", ".join(f"{k}=?" for k in fields)
     c = db.conn()
+    before = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not before:
+        raise HTTPException(404, "Лид не найден")
+
+    sets = ", ".join(f"{k}=?" for k in fields)
     c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
               list(fields.values()) + [db.now(), lead_id])
     c.commit()
+
+    who = request.state.login
+    for field, value in fields.items():
+        if history._text(before[field]) == history._text(value):
+            continue
+        action = ("hide" if value else "show") if field == "hidden"             else UPDATE_ACTIONS.get(field, "edit")
+        history.log(who, action, lead=before, field=field,
+                    old=before[field], new=value)
     return {"ok": True}
 
 
@@ -295,7 +315,7 @@ def _find_duplicate(name, website):
 
 
 @app.post("/api/lead")
-def create_lead(payload: dict = Body(...)):
+def create_lead(request: Request, payload: dict = Body(...)):
     """Добавляет объект руками: маркетолог нашёл его сам."""
     name = (payload.get("name") or "").strip()
     if not name:
@@ -351,6 +371,7 @@ def create_lead(payload: dict = Body(...)):
     c.commit()
 
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
+    history.log(request.state.login, "create", lead=row, new=row["name"])
     return db.row_to_dict(row)
 
 
@@ -374,9 +395,41 @@ EDITABLE = {
 }
 CONTACT_FIELDS = ("phone", "telegram", "vk", "whatsapp", "email")
 
+# Подписи полей для журнала изменений: в ленте должно быть написано
+# «Телефон», а не phone. Правимые руками поля берём из EDITABLE, остальное —
+# то, что вообще способно попасть в журнал.
+FIELD_LABELS = dict(EDITABLE, **{
+    "status": "Статус",
+    "priority": "Приоритет",
+    "hidden": "Скрыт из списка",
+    "hidden_reason": "Причина скрытия",
+    "note": "Заметка",
+    "website": "Адрес сайта",
+    "previous_website": "Прежний адрес",
+    "final_url": "Конечный адрес",
+    "site_status": "Состояние сайта",
+    "reason_code": "Главный признак",
+    "reason_text": "Главный признак",
+    "score": "Балл",
+    "phones": "Все телефоны",
+    "contact_source": "Источник контактов",
+    "manual_fields": "Защита ручных правок",
+    "ai_summary": "Сводка автопроверки",
+    "ai_problems": "Проблемы по автопроверке",
+    "ai_sources": "Источники автопроверки",
+    "ai_aggregators": "Агрегаторы",
+    "ai_found_site": "Найденный сайт",
+    "ai_director": "Руководитель по поиску",
+    "ai_company": "Реквизиты по поиску",
+    "ai_is_open": "Работает ли объект",
+    "ai_checked_at": "Дата автопроверки",
+    "ai_model": "Чем проверено",
+    "ai_error": "Ошибка автопроверки",
+})
+
 
 @app.post("/api/lead/{lead_id}/edit")
-def edit_lead(lead_id: int, payload: dict = Body(...)):
+def edit_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     """Правит поля карточки руками и защищает их от следующего сбора."""
     c = db.conn()
     row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
@@ -433,6 +486,10 @@ def edit_lead(lead_id: int, payload: dict = Body(...)):
               list(changes.values()) + [db.now(), lead_id])
     c.commit()
 
+    # В журнал идут только те поля, которые человек и правда вписал. Служебная
+    # пересборка phones, contact_source и manual_fields — не его правка.
+    history.log_changes(request.state.login, row, changes, only=set(EDITABLE))
+
     # Контакты влияют на балл, поэтому пересчитываем
     return pipeline.rescore_one(lead_id)
 
@@ -447,9 +504,11 @@ def research_brief_text(lead_id: int):
 
 
 @app.post("/api/lead/{lead_id}/findings")
-def save_findings(lead_id: int, payload: dict = Body(...)):
+def save_findings(request: Request, lead_id: int, payload: dict = Body(...)):
     """Принимает JSON, который человек принёс из чата, и раскладывает по полям."""
-    if not db.conn().execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+    c = db.conn()
+    before = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not before:
         raise HTTPException(404, "Лид не найден")
 
     found, error = research_brief.parse(payload.get("text"))
@@ -459,27 +518,35 @@ def save_findings(lead_id: int, payload: dict = Body(...)):
     lead = pipeline.apply_research(lead_id, found)
     if not lead:
         raise HTTPException(404, "Лид не найден")
+
+    # Автора ставим человека, а не «сбор»: он выбрал, какой ответ из чата
+    # вставить, и отвечает за него. Каждое поле — своя строка, чтобы неудачную
+    # вставку можно было вернуть по частям.
+    after = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    history.log_changes(request.state.login, before,
+                        {k: after[k] for k in after.keys()}, action="research")
     return lead
 
 
 @app.post("/api/lead/{lead_id}/unlock")
-def unlock_lead(lead_id: int):
+def unlock_lead(request: Request, lead_id: int):
     """Снимает защиту ручных правок — сбор снова будет обновлять эти поля."""
     c = db.conn()
-    if not c.execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Лид не найден")
     c.execute("UPDATE leads SET manual_fields='', website_manual=0, updated_at=? WHERE id=?",
               (db.now(), lead_id))
     c.commit()
+    history.log(request.state.login, "unlock", lead=row, old=row["manual_fields"] or "")
     return db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone())
 
 
 @app.post("/api/lead/{lead_id}/website")
-def change_website(lead_id: int, payload: dict = Body(...)):
+def change_website(request: Request, lead_id: int, payload: dict = Body(...)):
     """Ставит новый адрес сайта, помнит старый и сразу перепроверяет лид."""
     c = db.conn()
-    row = c.execute("SELECT website, previous_website FROM leads WHERE id=?",
-                    (lead_id,)).fetchone()
+    row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Лид не найден")
 
@@ -501,6 +568,8 @@ def change_website(lead_id: int, payload: dict = Body(...)):
         (new, previous, 1, db.now(), lead_id),
     )
     c.commit()
+    history.log(request.state.login, "website", lead=row,
+                field="website", old=old, new=new)
 
     return pipeline.recheck_lead(lead_id, drop_site_contacts=True)
 
@@ -517,9 +586,10 @@ def recheck(lead_id: int):
 # ── запуск сбора ─────────────────────────────────────────────────────────────
 
 @app.post("/api/run")
-def start_run(payload: dict = Body(default={})):
+def start_run(request: Request, payload: dict = Body(default={})):
     if pipeline.state()["running"]:
         raise HTTPException(409, "Сбор уже идёт")
+    history.log(request.state.login, "run")
     pipeline.run_async(
         use_osm=payload.get("use_osm", True),
         use_dadata=payload.get("use_dadata", True),
@@ -595,7 +665,7 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
 
 
 @app.post("/api/import")
-async def import_csv(file: UploadFile = File(...)):
+async def import_csv(request: Request, file: UploadFile = File(...)):
     """Ручной импорт: name;website;phone;address;category. Лиды сразу проверяются."""
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
     dialect = csv.Sniffer().sniff(raw[:2000], delimiters=";,\t") \
@@ -631,6 +701,7 @@ async def import_csv(file: UploadFile = File(...)):
         db.upsert(pipeline.process_lead(lead))
         added += 1
 
+    history.log(request.state.login, "import", new=f"{added}")
     return {"ok": True, "added": added}
 
 
@@ -713,6 +784,9 @@ def activity_report(request: Request, login: str = "", days: int = 14):
         "days": days,
         "people": activity.people(),
         "report": activity.report(login.strip() or None, since=since),
+        # Часы сами по себе ничего не говорят: рядом должно стоять, сколько
+        # человек за это время реально сделал в базе.
+        "edits": history.counts(since=since),
     }
 
 
@@ -722,6 +796,56 @@ def activity_page(request: Request):
     if not auth.is_admin(getattr(request.state, "login", "")):
         return RedirectResponse("/", status_code=302)
     return FileResponse(config.BASE_DIR / "static" / "activity.html")
+
+
+# ── журнал изменений ─────────────────────────────────────────────────────────
+
+@app.get("/api/lead/{lead_id}/history")
+def lead_history(request: Request, lead_id: int, system: int = 0):
+    """История одного объекта. Видна всем: знать, кто менял сайт, полезно обоим."""
+    if not db.conn().execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+        raise HTTPException(404, "Лид не найден")
+    return {"rows": history.for_lead(lead_id, with_system=bool(system)),
+            "can_undo": auth.is_admin(request.state.login)}
+
+
+@app.get("/api/history")
+def history_feed(request: Request, login: str = "", action: str = "",
+                 since: str = "", until: str = "", q: str = "",
+                 system: int = 0, limit: int = 200, offset: int = 0):
+    """Общая лента по всем объектам. Только владельцу базы."""
+    _admin_only(request)
+    data = history.feed(login=login.strip(), action=action.strip(),
+                        since=since.strip(), until=until.strip(), q=q.strip(),
+                        with_system=bool(system),
+                        limit=max(1, min(limit, 500)), offset=max(0, offset))
+    data["people"] = activity.people() + [history.SYSTEM_LABEL]
+    data["actions"] = history.ACTIONS
+    return data
+
+
+@app.post("/api/history/{entry_id}/revert")
+def history_revert(request: Request, entry_id: int):
+    """Возвращает прежнее значение одной правки."""
+    _admin_only(request)
+    entry = db.conn().execute("SELECT field FROM history WHERE id=?",
+                              (entry_id,)).fetchone()
+    lead, error = history.revert(entry_id, request.state.login)
+    if error:
+        raise HTTPException(400, error)
+
+    # Вернули адрес сайта — весь прежний аудит относится к чужому домену.
+    # Перепроверяем сразу, иначе в карточке останется состояние не того сайта.
+    if entry and entry["field"] == "website":
+        return pipeline.recheck_lead(lead["id"])
+    return db.row_to_dict(lead)
+
+
+@app.get("/history")
+def history_page(request: Request):
+    if not auth.is_admin(getattr(request.state, "login", "")):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(config.BASE_DIR / "static" / "history.html")
 
 
 # ── статика ──────────────────────────────────────────────────────────────────
