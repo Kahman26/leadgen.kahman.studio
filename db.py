@@ -145,6 +145,18 @@ CREATE TABLE IF NOT EXISTS refs (
 );
 
 
+-- Рабочее время сотрудников. Пишем не каждый сигнал браузера, а сразу
+-- отрезки: пока сигналы идут подряд, у последнего отрезка сдвигается конец.
+-- Так за смену остаётся несколько строк вместо нескольких сотен, и отрезок
+-- сам по себе отвечает на вопрос «в какие промежутки человек работал».
+CREATE TABLE IF NOT EXISTS activity (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    login    TEXT NOT NULL,
+    started  INTEGER NOT NULL,     -- unix-время первого сигнала отрезка, UTC
+    ended    INTEGER NOT NULL      -- unix-время последнего сигнала отрезка
+);
+
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT,
@@ -178,6 +190,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_org ON leads(org_status);
 CREATE INDEX IF NOT EXISTS idx_leads_priority ON leads(priority DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_refs_category ON refs(category);
+CREATE INDEX IF NOT EXISTS idx_activity_login ON activity(login, started);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS

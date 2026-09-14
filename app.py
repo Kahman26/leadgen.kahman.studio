@@ -11,6 +11,7 @@ from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
+import activity
 import auth
 import config
 import db
@@ -117,6 +118,7 @@ def get_config(request: Request):
         "dadata_ready": bool(config.DADATA_TOKEN),
         "hot": scoring.HOT,
         "login": getattr(request.state, "login", ""),
+        "is_admin": auth.is_admin(getattr(request.state, "login", "")),
         "editable": EDITABLE,
 
     }
@@ -681,6 +683,45 @@ def refs_delete(ref_id: int):
         raise HTTPException(404, "Референс не найден")
     refs.remove(ref_id)
     return {"ok": True}
+
+
+# ── учёт рабочего времени ────────────────────────────────────────────────────
+
+def _admin_only(request: Request):
+    """Отчёт по сотрудникам видит только владелец базы."""
+    login = getattr(request.state, "login", "")
+    if not auth.is_admin(login):
+        raise HTTPException(403, "Доступ только у владельца базы")
+    return login
+
+
+@app.post("/api/ping")
+def ping(request: Request):
+    """Сигнал «я сейчас работаю». Шлёт открытая вкладка раз в минуту."""
+    activity.touch(getattr(request.state, "login", ""))
+    return {"ok": True, "beat": activity.BEAT}
+
+
+@app.get("/api/activity")
+def activity_report(request: Request, login: str = "", days: int = 14):
+    _admin_only(request)
+    days = max(1, min(days, 180))
+    since = activity.days_back(days)
+    return {
+        "since": since,
+        "until": activity.today(),
+        "days": days,
+        "people": activity.people(),
+        "report": activity.report(login.strip() or None, since=since),
+    }
+
+
+@app.get("/activity")
+def activity_page(request: Request):
+    # Чужому логину страницы просто нет — возвращаем его к лидам.
+    if not auth.is_admin(getattr(request.state, "login", "")):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(config.BASE_DIR / "static" / "activity.html")
 
 
 # ── статика ──────────────────────────────────────────────────────────────────

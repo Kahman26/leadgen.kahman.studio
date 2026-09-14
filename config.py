@@ -7,6 +7,10 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADGEN_DB", str(BASE_DIR / "leads.db"))
 
+# Часовой пояс города, в часах от UTC. Сервер живёт по UTC, а отчёт о рабочем
+# времени должен ложиться на дни так, как их видит сотрудник. Екатеринбург +5.
+TZ_OFFSET_HOURS = int(os.getenv("LEADGEN_TZ_OFFSET", "5"))
+
 # ── Город ────────────────────────────────────────────────────────────────────
 CITY_NAME = "Екатеринбург"
 CITY_REGION = "Свердловская"

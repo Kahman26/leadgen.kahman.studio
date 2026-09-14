@@ -25,6 +25,7 @@
     <button id="menuClose" aria-label="Закрыть">✕</button>
   </div>
   <a class="menuitem" href="/refs">Референсы</a>
+  <a class="menuitem" id="mnActivity" href="/activity" hidden>Рабочее время</a>
   <button class="menuitem" id="btnRun">Запустить сбор</button>
   <button class="menuitem" id="btnImport">Импорт CSV</button>
   <button class="menuitem" id="btnExport">Выгрузить в CSV</button>
@@ -165,6 +166,7 @@
 
 <input type="file" id="fileInput" accept=".csv" hidden>
 
+<script src="/static/heartbeat.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

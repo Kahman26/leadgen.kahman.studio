@@ -410,3 +410,25 @@ dialog .err.on { display: block; }
 /* Ссылка-кнопка «к лидам» в шапке */
 a.btn { display: inline-block; text-decoration: none; }
 a.btn:hover { text-decoration: none; }
+
+/* ── рабочее время сотрудников ──────────────────────────────────────────── */
+.person { margin-bottom: 24px; }
+.personhead {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.personhead h2 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+.personhead .spacer { flex: 1; }
+.personhead .total { font-size: 17px; font-weight: 680; font-variant-numeric: tabular-nums; }
+.chip.online { background: transparent; border: 1px solid var(--ok); color: var(--ok); }
+
+/* Строки здесь ничего не открывают — рука вместо стрелки только сбивает */
+.person tbody tr { cursor: default; }
+.person tbody tr:hover { background: transparent; }
+.person td.day { white-space: nowrap; }
+.person td.sum { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* Полоса длины дня: сравнение на глаз, без чтения цифр */
+.barcell { width: 170px; }
+.barcell i { display: block; height: 8px; border-radius: 999px; background: var(--accent); }
+@media (max-width: 760px) { .barcell { display: none; } .person th:nth-child(3) { display: none; } }

@@ -13,6 +13,9 @@
 
 Сессии лежат в таблице sessions: перезапуск сервиса не выкидывает команду
 обратно на форму входа.
+
+Аналитику рабочего времени видит только владелец базы. Список таких логинов
+задаётся LEADGEN_ADMINS (через запятую); по умолчанию — arkprhrv.
 """
 
 import hashlib
@@ -51,6 +54,20 @@ def load_users():
         if login and password:
             users[login] = password
     return users
+
+
+# Кто видит аналитику рабочего времени. По умолчанию — владелец базы;
+# список расширяется через LEADGEN_ADMINS, логины через запятую.
+DEFAULT_ADMINS = "arkprhrv"
+
+
+def load_admins():
+    raw = os.getenv("LEADGEN_ADMINS", DEFAULT_ADMINS)
+    return {x.strip() for x in raw.replace(",", ";").split(";") if x.strip()}
+
+
+def is_admin(login):
+    return bool(login) and login.strip() in load_admins()
 
 
 def make_hash(password, rounds=PBKDF2_ROUNDS):

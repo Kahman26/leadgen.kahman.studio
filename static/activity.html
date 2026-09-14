@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Рабочее время — сборщик лидов</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Рабочее время</h1>
+  <span class="city">кто когда работал с базой</span>
+  <span class="spacer"></span>
+  <a class="btn" href="/">← К лидам</a>
+</header>
+
+<div class="wrap">
+
+  <div class="filters">
+    <select id="fPerson"><option value="">Все сотрудники</option></select>
+    <select id="fDays">
+      <option value="7">7 дней</option>
+      <option value="14" selected>14 дней</option>
+      <option value="30">30 дней</option>
+      <option value="90">90 дней</option>
+    </select>
+    <span class="muted" id="range"></span>
+  </div>
+
+  <div id="body"><div class="empty">Загружаем…</div></div>
+
+</div>
+
+<script src="/static/heartbeat.js"></script>
+<script src="/static/activity.js"></script>
+</body>
+</html>

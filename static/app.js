@@ -612,6 +612,9 @@ async function init() {
   CFG = await api('/api/config');
   $('cityLabel').textContent = CFG.city + ' · ниша бронирования';
   $('who').textContent = CFG.login || '';
+  // Отчёт по сотрудникам — только владельцу базы. Сервер всё равно
+  // проверит права, но и показывать чужую кнопку незачем.
+  $('mnActivity').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
