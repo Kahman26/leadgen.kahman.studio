@@ -72,6 +72,29 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.07); }
 
+button.burger { font-size: 18px; line-height: 1; padding: 6px 12px; }
+
+.menuback {
+  position: fixed; inset: 0; background: rgba(16, 24, 40, .38); z-index: 60;
+}
+.menu {
+  position: fixed; top: 0; left: 0; bottom: 0; width: min(280px, 85vw);
+  background: var(--panel); border-right: 1px solid var(--line);
+  z-index: 61; padding: 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.menuhead {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.menuhead button { padding: 4px 10px; }
+.menuitem {
+  display: block; width: 100%; text-align: left; padding: 10px 12px;
+  border: 1px solid transparent; border-radius: 8px; background: none;
+  color: var(--ink); font: inherit; cursor: pointer; text-decoration: none;
+}
+.menuitem:hover { background: var(--accent-soft); border-color: transparent; }
+.menusep { height: 1px; background: var(--line); margin: 8px 0; }
+
 /* ── карточки статистики ────────────────────────────────────────────────── */
 .wrap { padding: 18px 20px 60px; max-width: 1600px; margin: 0 auto; }
 
@@ -86,10 +109,22 @@ button.primary:hover { filter: brightness(1.07); }
 .stat .t { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 /* ── панель фильтров ────────────────────────────────────────────────────── */
+/* Одна строка: селекты сжимаются, а не переносятся. min-width: 0 обязателен —
+   без него у flex-элемента ширина не опускается ниже содержимого. */
 .filters {
-  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  display: flex; gap: 8px; flex-wrap: nowrap; align-items: center;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 10px 12px; margin-bottom: 14px; box-shadow: var(--shadow);
+}
+.filters select { flex: 1 1 0; min-width: 0; }
+.filters input[type=search] { flex: 1 1 130px; min-width: 0; }
+.filters #count { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
+.filters #btnStats { flex: 0 0 auto; white-space: nowrap; }
+
+/* На узком экране в строку не влезет — тогда переносим */
+@media (max-width: 1100px) {
+  .filters { flex-wrap: wrap; }
+  .filters select, .filters input[type=search] { flex: 1 1 150px; }
 }
 /* Перечислять типы по одному нельзя: забытый type=password остаётся
    с белым фоном браузера и на тёмной теме светится. */
@@ -98,7 +133,7 @@ select, textarea {
   font: inherit; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
 }
-input[type=search] { min-width: 220px; }
+
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 
 /* ── таблица ────────────────────────────────────────────────────────────── */
@@ -175,6 +210,7 @@ td .sub { color: var(--muted); font-size: 12px; }
   top: 74px;
   max-height: calc(100vh - 96px);
   overflow-y: auto;
+  overflow-x: hidden;          /* страховка: вбок панель не ездит никогда */
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -184,11 +220,19 @@ td .sub { color: var(--muted); font-size: 12px; }
 .side .placeholder {
   color: var(--muted); text-align: center; padding: 70px 10px; font-size: 13px;
 }
+/* Название и крестик — одна строка, действия отдельной строкой ниже.
+   Раньше три кнопки и заголовок делили 400 px, и длинное название
+   выдавливало крестик за край: у панели появлялся горизонтальный скролл. */
 .cardhead {
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
 }
-.cardhead h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.02em; }
-.cardhead .close { flex: 0 0 auto; padding: 4px 10px; line-height: 1.2; }
+.cardhead h2 {
+  margin: 0; font-size: 18px; letter-spacing: -.02em;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.cardhead .close { flex: 0 0 auto; padding: 4px 9px; line-height: 1.2; }
+.cardmeta { margin-top: 4px; color: var(--muted); }
+.cardactions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 
 .section { margin-top: 18px; }
 .section h3 {

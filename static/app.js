@@ -35,7 +35,6 @@ function params(extra = {}) {
   if ($('fStatus').value) p.set('status', $('fStatus').value);
   if ($('fHas').value) p.set('has', $('fHas').value);
   if ($('fHidden').value) p.set('hidden', $('fHidden').value);
-  if ($('fOrg').value) p.set('org', $('fOrg').value);
   p.set('sort', $('fSort').value);
   if (statFilter) Object.entries(statFilter).forEach(([k, v]) => p.set(k, v));
   Object.entries(extra).forEach(([k, v]) => p.set(k, v));
@@ -70,7 +69,7 @@ async function loadStats() {
     const f = cards[i].f;
     statFilter = (JSON.stringify(f) === JSON.stringify(statFilter)) ? null : f;
     if (statFilter) { $('fReason').value = ''; $('fHas').value = '';
-                      $('fHidden').value = ''; $('fOrg').value = ''; }
+                      $('fHidden').value = ''; }
     offset = 0; loadStats(); loadLeads();
   });
 
@@ -185,18 +184,16 @@ async function openLead(id) {
 
   $('drawer').innerHTML = `
     <div class="cardhead">
-      <div>
-        <h2>${esc(l.name)}</h2>
-        <div class="muted">${esc(l.category || '')} · балл
-          <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
-          <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;flex:0 0 auto">
-        <button id="aiLead" title="Проверить объект через чат с Claude">Проверка</button>
-        <button id="editLead" title="Исправить данные карточки">Изменить</button>
-        <button class="close" onclick="closeLead()">✕</button>
-      </div>
+      <h2>${esc(l.name)}</h2>
+      <button class="close" onclick="closeLead()" title="Закрыть">✕</button>
+    </div>
+    <div class="cardmeta">${esc(l.category || '')} · балл
+      <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
+      <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
+    </div>
+    <div class="cardactions">
+      <button id="aiLead" title="Проверить объект через чат с Claude">Проверка</button>
+      <button id="editLead" title="Исправить данные карточки">Изменить</button>
     </div>
 
     ${(l.manual_fields || []).length || l.website_manual ? `
@@ -455,10 +452,10 @@ const EDIT_GROUPS = [
 function openResearch(l) {
   $('drawer').innerHTML = `
     <div class="cardhead">
-      <div><h2>${esc(l.name)}</h2>
-      <div class="muted">Проверка через чат</div></div>
+      <h2>${esc(l.name)}</h2>
       <button class="close" id="resBack">Назад</button>
     </div>
+    <div class="cardmeta">Проверка через чат</div>
 
     <div class="section">
       <h3>Шаг 1 — запрос</h3>
@@ -526,9 +523,9 @@ function openEditor(l) {
 
   $('drawer').innerHTML = `
     <div class="cardhead">
-      <div><h2>${esc(l.name)}</h2>
-      <div class="muted">Правка карточки</div></div>
+      <h2>${esc(l.name)}</h2>
     </div>
+    <div class="cardmeta">Правка карточки</div>
     <div class="err" id="editErr"></div>
     ${EDIT_GROUPS.map(([title, keys]) => `
       <div class="section"><h3>${title}</h3>${keys.map(field).join('')}</div>`).join('')}
@@ -629,12 +626,32 @@ async function init() {
   const rerun = () => { offset = 0; statFilter = null; loadLeads(); loadStats(); };
   let t;
   $('q').oninput = () => { clearTimeout(t); t = setTimeout(rerun, 300); };
-  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fHidden', 'fOrg', 'fSort']
+  ['fReason', 'fCategory', 'fStatus', 'fHas', 'fHidden', 'fSort']
     .forEach((id) => $(id).onchange = rerun);
 
   $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadLeads(); };
   $('next').onclick = () => { offset += PAGE; loadLeads(); };
   document.onkeydown = (e) => { if (e.key === 'Escape') closeLead(); };
+
+  // Сводка занимает пол-экрана и нужна не всегда — по умолчанию свёрнута
+  $('btnStats').onclick = () => {
+    const box = $('stats');
+    box.hidden = !box.hidden;
+    $('btnStats').textContent = box.hidden ? 'Сводка' : 'Свернуть сводку';
+  };
+
+  // ── боковое меню ─────────────────────────────────────────────────────
+  const menu = (open) => {
+    $('menu').hidden = !open;
+    $('menuBack').hidden = !open;
+  };
+  $('btnMenu').onclick = () => menu(true);
+  $('menuClose').onclick = () => menu(false);
+  $('menuBack').onclick = () => menu(false);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu(false); });
+  $('menu').querySelectorAll('.menuitem').forEach((el) => {
+    el.addEventListener('click', () => menu(false));
+  });
 
   $('btnExport').onclick = () => { location.href = '/api/export.csv?' + params(); };
 

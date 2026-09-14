@@ -13,14 +13,24 @@
   <h1>Сборщик лидов</h1>
   <span class="city" id="cityLabel">—</span>
   <span class="spacer"></span>
-  <span class="who" id="who"></span>
-  <button id="btnLogout">Выйти</button>
-  <a class="btn" href="/refs">Референсы</a>
   <button id="btnAdd">+ Объект</button>
-  <button id="btnImport">Импорт CSV</button>
-  <button id="btnExport">Выгрузить в CSV</button>
-  <button id="btnRun" class="primary">Запустить сбор</button>
+  <button id="btnMenu" class="burger" aria-label="Меню" title="Меню">☰</button>
 </header>
+
+<!-- Боковое меню: редкие действия убраны сюда, чтобы шапка не рябила -->
+<div class="menuback" id="menuBack" hidden></div>
+<nav class="menu" id="menu" hidden>
+  <div class="menuhead">
+    <span class="who" id="who"></span>
+    <button id="menuClose" aria-label="Закрыть">✕</button>
+  </div>
+  <a class="menuitem" href="/refs">Референсы</a>
+  <button class="menuitem" id="btnRun">Запустить сбор</button>
+  <button class="menuitem" id="btnImport">Импорт CSV</button>
+  <button class="menuitem" id="btnExport">Выгрузить в CSV</button>
+  <div class="menusep"></div>
+  <button class="menuitem" id="btnLogout">Выйти</button>
+</nav>
 
 <div class="wrap">
 
@@ -30,41 +40,36 @@
     <div class="log" id="runLog"></div>
   </div>
 
-  <div class="stats" id="stats"></div>
+  <div class="stats" id="stats" hidden></div>
 
   <div class="filters">
-    <input type="search" id="q" placeholder="Поиск: название, адрес, сайт, ИНН">
-    <select id="fReason"><option value="">Любой признак</option></select>
-    <select id="fCategory"><option value="">Любая категория</option></select>
-    <select id="fStatus"><option value="">Любой статус</option></select>
+    <button id="btnStats" class="linkbtn" title="Показать или скрыть сводку">
+      Сводка
+    </button>
+    <input type="search" id="q" placeholder="Поиск">
+    <select id="fReason"><option value="">Все признаки</option></select>
+    <select id="fCategory"><option value="">Все типы</option></select>
+    <select id="fStatus"><option value="">Все статусы</option></select>
     <select id="fHas">
-      <option value="">Контакты: любые</option>
-      <option value="contact">Есть хоть один контакт</option>
+      <option value="">Любые контакты</option>
+      <option value="contact">Есть контакт</option>
       <option value="phone">Есть телефон</option>
       <option value="telegram">Есть Telegram</option>
       <option value="vk">Есть ВКонтакте</option>
       <option value="none">Контактов нет</option>
     </select>
-    <select id="fOrg">
-      <option value="">Организация: любая</option>
-      <option value="active">Действующие</option>
-      <option value="dead">Ликвидированные</option>
-      <option value="liquidating">В стадии ликвидации</option>
-      <option value="unknown">Не найдены в ЕГРЮЛ</option>
-    </select>
     <select id="fHidden">
-      <option value="">Скрытые: не показывать</option>
+      <option value="">Без скрытых</option>
       <option value="only">Только скрытые</option>
-      <option value="all">Показывать вместе со всеми</option>
+      <option value="all">Со скрытыми</option>
     </select>
     <select id="fSort">
-      <option value="score">Сортировать: по баллу</option>
-      <option value="priority">по моему приоритету</option>
-      <option value="new">по дате добавления</option>
-      <option value="name">по названию</option>
-      <option value="checked">по дате проверки</option>
+      <option value="score">По баллу</option>
+      <option value="priority">По приоритету</option>
+      <option value="new">По дате</option>
+      <option value="name">По названию</option>
+      <option value="checked">По проверке</option>
     </select>
-    <span class="spacer"></span>
     <span class="muted" id="count"></span>
   </div>
 
