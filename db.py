@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS leads (
     ai_model        TEXT DEFAULT '',
     ai_error        TEXT DEFAULT '',
     ai_company      TEXT DEFAULT '',     -- JSON: реквизиты по версии поиска
+    ai_is_open      TEXT DEFAULT '',     -- true | false: работает ли бизнес по версии поиска
 
     hidden          INTEGER DEFAULT 0,   -- убран из списка (закрылись и т.п.)
     hidden_reason   TEXT DEFAULT '',
@@ -208,6 +209,7 @@ MIGRATIONS = [
     ("ai_model", "TEXT DEFAULT ''"),
     ("ai_error", "TEXT DEFAULT ''"),
     ("ai_company", "TEXT DEFAULT ''"),
+    ("ai_is_open", "TEXT DEFAULT ''"),
     ("parked_reason", "TEXT DEFAULT ''"),
 ]
 

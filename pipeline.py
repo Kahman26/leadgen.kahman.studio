@@ -298,6 +298,7 @@ def apply_research(lead_id, found):
         "ai_aggregators": json.dumps(found.get("aggregators") or [], ensure_ascii=False),
         "ai_found_site": _clean(found.get("website")),
         "ai_company": json.dumps(company, ensure_ascii=False) if company else "",
+        "ai_is_open": {True: "true", False: "false"}.get(found.get("is_open"), ""),
         "ai_checked_at": db.now(),
         "ai_model": found.get("_model") or "чат",
         "ai_error": "",

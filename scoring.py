@@ -91,7 +91,14 @@ def score_lead(lead, audit):
     # при уверенном совпадении: при неточном мы рискуем выбросить живой
     # объект из-за ликвидированного однофамильца.
     dead_org = (lead.get("org_status") or "") in ("LIQUIDATED", "BANKRUPT")
-    if dead_org and lead.get("dadata_confidence") == "high":
+
+    # Ликвидировано юрлицо — не значит, что закрылся бизнес. Отель нередко
+    # переоформляют на новую компанию, а в реестре по старому ИНН остаётся
+    # запись о ликвидации. Если проверка своими глазами видела работающий
+    # объект — свежие отзывы, продажу номеров, живой сайт, — обнулять лид
+    # нельзя: так мы прячем как раз тех, к кому стоит идти.
+    found_open = (lead.get("ai_is_open") or "") == "true"
+    if dead_org and lead.get("dadata_confidence") == "high" and not found_open:
         when = lead.get("liquidated_at") or ""
         gaps = [f"Организация ликвидирована по ЕГРЮЛ{f' ({when})' if when else ''}"]
         if lead.get("org_name"):
@@ -153,6 +160,10 @@ def score_lead(lead, audit):
         if load > SLOW_MS:
             problems.append("SLOW")
             missing.append(f"Главная грузится {load / 1000:.1f} с")
+
+    if dead_org and found_open:
+        missing.append("В ЕГРЮЛ организация ликвидирована, но проверка нашла "
+                       "работающий объект — сверку с реестром надо перепроверить")
 
     if (lead.get("org_status") or "") == "LIQUIDATING":
         missing.append("По ЕГРЮЛ организация в стадии ликвидации")
