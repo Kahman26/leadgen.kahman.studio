@@ -75,18 +75,29 @@ button.primary:hover { filter: brightness(1.07); }
 button.burger { font-size: 18px; line-height: 1; padding: 6px 12px; }
 
 .menuback {
-  position: fixed; inset: 0; background: rgba(16, 24, 40, .38); z-index: 60;
+  position: fixed; inset: 0; background: rgba(16, 24, 40, .45); z-index: 60;
 }
+/* Панель выезжает справа — с той же стороны, где стоит сама кнопка ☰.
+   Слева она отрывалась от бургера и читалась как чужой элемент экрана. */
 .menu {
-  position: fixed; top: 0; left: 0; bottom: 0; width: min(280px, 85vw);
-  background: var(--panel); border-right: 1px solid var(--line);
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(300px, 88vw);
+  background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -14px 0 34px rgba(0, 0, 0, .28);
   z-index: 61; padding: 14px; display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; animation: menuin .16s ease-out;
 }
+@keyframes menuin { from { transform: translateX(100%); } to { transform: none; } }
 .menuhead {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
 }
-.menuhead button { padding: 4px 10px; }
+.menuhead .who {
+  font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menuhead button { flex: 0 0 auto; padding: 4px 10px; }
+/* Пока меню открыто, страница под ним не должна уезжать от колеса мыши */
+body.noscroll { overflow: hidden; }
 .menuitem {
   display: block; width: 100%; text-align: left; padding: 10px 12px;
   border: 1px solid transparent; border-radius: 8px; background: none;
@@ -116,15 +127,23 @@ button.burger { font-size: 18px; line-height: 1; padding: 6px 12px; }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 10px 12px; margin-bottom: 14px; box-shadow: var(--shadow);
 }
-.filters select { flex: 1 1 0; min-width: 0; }
-.filters input[type=search] { flex: 1 1 130px; min-width: 0; }
+.filters select { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
+.filters input[type=search] { flex: 1 1 0; min-width: 0; }
 .filters #count { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
 .filters #btnStats { flex: 0 0 auto; white-space: nowrap; }
 
-/* На узком экране в строку не влезет — тогда переносим */
-@media (max-width: 1100px) {
+/* Ноутбук 1396 px с масштабом Windows 125-150% отдаёт странице всего
+   900-1100 CSS-пикселей. Там строка ещё влезает, если ужать отступы,
+   а не переносить «По баллу» и счётчик лидов на второй ряд. */
+@media (max-width: 1150px) {
+  .filters { gap: 6px; padding: 10px 8px; }
+  .filters select, .filters input[type=search] { padding: 7px 6px; }
+  .filters #count { font-size: 11px; }
+}
+/* Ниже этого одной строкой уже не прочитать — только тогда переносим */
+@media (max-width: 760px) {
   .filters { flex-wrap: wrap; }
-  .filters select, .filters input[type=search] { flex: 1 1 150px; }
+  .filters select, .filters input[type=search] { flex: 1 1 150px; padding: 7px 10px; }
 }
 /* Перечислять типы по одному нельзя: забытый type=password остаётся
    с белым фоном браузера и на тёмной теме светится. */

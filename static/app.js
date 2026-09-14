@@ -642,6 +642,11 @@ async function init() {
 
   // ── боковое меню ─────────────────────────────────────────────────────
   const menu = (open) => {
+    // Скрытие прокрутки убирает системный скроллбар, и страница дёргается
+    // вбок на его ширину. Компенсируем отступом ровно на эту ширину.
+    const gap = open ? window.innerWidth - document.documentElement.clientWidth : 0;
+    document.body.style.paddingRight = gap ? gap + 'px' : '';
+    document.body.classList.toggle('noscroll', open);
     $('menu').hidden = !open;
     $('menuBack').hidden = !open;
   };
