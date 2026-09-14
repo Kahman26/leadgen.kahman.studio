@@ -27,7 +27,10 @@ db.init()
 auth.cleanup_sessions()
 
 # Сюда пускаем без входа: сама форма логина, её стили и ответ поисковикам.
-PUBLIC_PATHS = {"/login", "/robots.txt", "/favicon.ico"}
+# Иконки и манифест тоже без входа: браузер тянет манифест без куки, а айфон
+# берёт apple-touch-icon с корня ещё до того, как человек вошёл.
+PUBLIC_PATHS = {"/login", "/robots.txt", "/favicon.ico", "/site.webmanifest",
+                "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"}
 
 
 @app.middleware("http")
@@ -90,6 +93,30 @@ def logout(request: Request):
 def robots():
     """Полный запрет обхода: сервис не должен попадать в поисковую выдачу."""
     return PlainTextResponse("User-agent: *\nDisallow: /\n")
+
+
+ICONS = config.BASE_DIR / "static" / "icons"
+
+
+@app.get("/favicon.ico")
+def favicon():
+    """Браузер спрашивает корневой /favicon.ico, даже когда в head есть ссылки."""
+    return FileResponse(ICONS / "favicon-32.png", media_type="image/png")
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def apple_touch_icon():
+    """Safari ищет иконку в корне, если не нашёл ссылку в head страницы."""
+    return FileResponse(ICONS / "apple-touch-icon.png", media_type="image/png")
+
+
+@app.get("/site.webmanifest")
+def webmanifest():
+    """Отдаём с корня: путь манифеста задаёт область видимости приложения."""
+    return FileResponse(config.BASE_DIR / "static" / "site.webmanifest",
+                        media_type="application/manifest+json")
+
 
 STATUSES = {
     "new": "Новый",
