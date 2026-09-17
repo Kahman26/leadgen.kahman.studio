@@ -118,14 +118,26 @@ def webmanifest():
                         media_type="application/manifest+json")
 
 
+# Порядок словаря задаёт порядок кнопок в карточке и порядок в фильтре,
+# поэтому он повторяет реальный путь сделки, а не алфавит.
 STATUSES = {
     "new": "Новый",
     "auto_checked": "Автопроверка",      # Claude поискал, человек ещё не смотрел
     "in_work": "В работе",
+    "no_answer": "Не дозвонились",
     "contacted": "Связались",
+    "audit": "Аудит",                    # согласились на бесплатный аудит сайта
+    "proposal": "КП отправлено",         # аудит и смета у клиента, ждём решения
     "refused": "Отказ",
     "deal": "Сделка",
 }
+
+# Исход попытки дозвона и как он читается в ленте журнала.
+CALL_OUTCOMES = {"no_answer": "не ответили", "answered": "дозвонились"}
+
+# Статус, в который перевели лида, сам говорит об исходе звонка: нажимать
+# ещё и «записать попытку» продажник не должен.
+STATUS_CALL = {"no_answer": "no_answer", "contacted": "answered"}
 
 SORTS = {
     "score": "score DESC, id DESC",
@@ -215,7 +227,7 @@ def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "
         f"SELECT * FROM leads {where} ORDER BY {order} LIMIT ? OFFSET ?",
         params + [min(limit, 500), offset],
     ).fetchall()
-    return {"total": total, "items": [db.row_to_dict(r) for r in rows]}
+    return {"total": total, "items": [_with_calls(db.row_to_dict(r)) for r in rows]}
 
 
 @app.get("/api/stats")
@@ -260,18 +272,41 @@ def get_stats():
     }
 
 
+def _with_calls(d: dict) -> dict:
+    """Дорисовывает время последнего звонка словами.
+
+    В базе лежит UTC, а смотрит на него человек из города — перевод делаем
+    на сервере, чтобы формат был один и в списке, и в карточке.
+    """
+    ts = db.call_ts(d.get("last_call_at"))
+    d["call_count"] = d.get("call_count") or 0
+    d["last_call_text"] = activity.stamp(ts)
+    d["last_call_short"] = activity.day_text(ts)
+    return d
+
+
 @app.get("/api/lead/{lead_id}")
 def get_lead(lead_id: int):
     r = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
     if not r:
         raise HTTPException(404, "Лид не найден")
-    return db.row_to_dict(r)
+    return _with_calls(db.row_to_dict(r))
 
 
 # Каким действием журнала записать правку каждого поля: «скрыт» и «статус»
 # читаются в ленте куда быстрее, чем безликое «правка поля».
 UPDATE_ACTIONS = {"status": "status", "priority": "priority",
                   "note": "note", "hidden_reason": "hide"}
+
+
+def _record_call(login: str, lead, outcome: str) -> dict:
+    """Попытка дозвона: в calls, в счётчики лида и в журнал.
+
+    В UNDOABLE действие «звонок» не входит: откатывать факт звонка бессмысленно.
+    """
+    stats = db.add_call(lead["id"], login, outcome)
+    history.log(login, "call", lead=lead, new=CALL_OUTCOMES[outcome])
+    return _with_calls(stats)
 
 
 @app.post("/api/lead/{lead_id}")
@@ -313,7 +348,23 @@ def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
         action = ("hide" if value else "show") if field == "hidden"             else UPDATE_ACTIONS.get(field, "edit")
         history.log(who, action, lead=before, field=field,
                     old=before[field], new=value)
+        # Статус меняется только если он действительно другой — значит и
+        # попытка дозвона запишется ровно одна, а не на каждое нажатие.
+        if field == "status" and value in STATUS_CALL:
+            _record_call(who, before, STATUS_CALL[value])
     return {"ok": True}
+
+
+@app.post("/api/lead/{lead_id}/call")
+def add_call(request: Request, lead_id: int, payload: dict = Body(default={})):
+    """Ещё одна попытка дозвона по лиду, у которого статус уже не меняется."""
+    outcome = (payload or {}).get("outcome") or "no_answer"
+    if outcome not in CALL_OUTCOMES:
+        raise HTTPException(400, "Неизвестный исход звонка")
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    return _record_call(request.state.login, lead, outcome)
 
 
 def _find_duplicate(name, website):

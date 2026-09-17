@@ -127,7 +127,10 @@ async function loadLeads() {
       <td>${l.website
             ? `<a class="chip" target="_blank" rel="noopener" href="${esc(l.website)}">сайт ↗</a>`
             : '<span class="chip off">нет</span>'}</td>
-      <td><span class="st ${esc(l.status)}">${esc(CFG.statuses[l.status] || l.status)}</span></td>
+      <td><span class="st ${esc(l.status)}">${esc(CFG.statuses[l.status] || l.status)}${
+            l.status === 'no_answer' && l.call_count
+              ? ` <b class="tries${l.call_count >= 3 ? ' warn' : ''}">(${l.call_count})</b>`
+              : ''}</span></td>
     </tr>`).join('');
 
   $('empty').hidden = data.items.length > 0;
@@ -137,6 +140,49 @@ async function loadLeads() {
   $('next').disabled = offset + PAGE >= total;
 
   [...$('rows').children].forEach((tr) => tr.onclick = () => openLead(tr.dataset.id));
+}
+
+/* ── попытки дозвона ──────────────────────────────────────────────────── */
+
+// У «Не дозвонились» блок развёрнут и с кнопкой: продажник вернётся к лиду
+// ещё не раз. В остальных статусах — одна строка: когда лид уже перешёл в
+// «Связались», важно видеть, сколько он стоил усилий.
+function callBlock(l) {
+  const n = l.call_count || 0;
+  if (l.status === 'no_answer') {
+    return `
+      <div class="calls">
+        <div><b>Попыток дозвона: ${n}</b></div>
+        ${l.last_call_text ? `<div class="muted">Последняя: ${esc(l.last_call_text)}</div>` : ''}
+        <button id="callAgain">Снова не ответили</button>
+      </div>`;
+  }
+  if (!n) return '';
+  return `<div class="calls muted">Звонков: ${n}${
+    l.last_call_short ? ', последний ' + esc(l.last_call_short) : ''}</div>`;
+}
+
+// Перерисовываем только сам блок: статус не поменялся, дёргать список
+// и карточку целиком незачем — иначе панель моргает под курсором.
+function bindCall(id, l) {
+  const btn = $('callAgain');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      Object.assign(l, await api('/api/lead/' + id + '/call', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome: 'no_answer' }),
+      }));
+    } catch (e) {
+      btn.disabled = false;
+      alert('Не получилось записать звонок: ' + e.message);
+      return;
+    }
+    $('callBox').innerHTML = callBlock(l);
+    bindCall(id, l);
+    loadLeadHistory(id);        // попытка уже в журнале — покажем её сразу
+  };
 }
 
 /* ── карточка лида ────────────────────────────────────────────────────── */
@@ -354,6 +400,7 @@ async function openLead(id) {
         ${Object.entries(CFG.statuses).map(([k, v]) =>
           `<button data-st="${k}" class="${l.status === k ? 'on' : ''}">${esc(v)}</button>`).join('')}
       </div>
+      <div id="callBox">${callBlock(l)}</div>
     </div>
 
     <div class="section">
@@ -389,8 +436,15 @@ async function openLead(id) {
     });
     $('drawer').querySelectorAll('[data-st]').forEach((x) => x.classList.remove('on'));
     b.classList.add('on');
-    loadLeads(); loadStats();
+    // «Не дозвонились» и «Связались» сами пишут попытку — счётчик надо
+    // перечитать, иначе блок покажет вчерашние цифры.
+    Object.assign(l, await api('/api/lead/' + id));
+    $('callBox').innerHTML = callBlock(l);
+    bindCall(id, l);
+    loadLeads(); loadStats(); loadLeadHistory(id);
   });
+
+  bindCall(id, l);
 
   $('saveNote').onclick = async () => {
     await api('/api/lead/' + id, {

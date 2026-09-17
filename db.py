@@ -4,6 +4,7 @@
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime
 
 import config
@@ -75,9 +76,13 @@ CREATE TABLE IF NOT EXISTS leads (
     score           INTEGER DEFAULT 0,
 
     -- работа маркетолога
-    status          TEXT DEFAULT 'new',  -- new | in_work | contacted | refused | deal
+    status          TEXT DEFAULT 'new',  -- см. STATUSES в app.py
     note            TEXT DEFAULT '',
     priority        INTEGER,             -- оценка 1–10, которую ставит человек
+
+    -- попытки дозвона: дубль из calls, чтобы список рисовался одним запросом
+    call_count      INTEGER DEFAULT 0,
+    last_call_at    TEXT DEFAULT '',     -- unix-время UTC строкой, '' если не звонили
 
     -- что нашла автопроверка через Claude
     ai_summary      TEXT DEFAULT '',     -- короткий рассказ про бизнес
@@ -157,6 +162,19 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 
 
+-- Попытки дозвона. Отдельная таблица, а не счётчик в leads: по ней считается
+-- воронка и процент дозвона в разрезе сотрудников и периодов, а счётчик такого
+-- вопроса не переживёт. Счётчики в leads — только для быстрой отрисовки списка,
+-- источник правды здесь.
+CREATE TABLE IF NOT EXISTS calls (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL,
+    login   TEXT NOT NULL,        -- кто звонил
+    ts      INTEGER NOT NULL,     -- unix-время, UTC
+    outcome TEXT NOT NULL         -- no_answer | answered
+);
+
+
 -- Журнал изменений: кто, когда и что поменял. Пишется на уровне приложения,
 -- а не триггером: триггер не знает, какой человек вошёл, а именно это и нужно,
 -- когда разбираешь чужую ошибку. Имя объекта продублировано намеренно —
@@ -212,6 +230,8 @@ CREATE INDEX IF NOT EXISTS idx_activity_login ON activity(login, started);
 CREATE INDEX IF NOT EXISTS idx_history_lead  ON history(lead_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_history_ts    ON history(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_history_login ON history(login, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_calls_lead ON calls(lead_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_calls_ts   ON calls(ts DESC);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
@@ -245,6 +265,8 @@ MIGRATIONS = [
     ("ai_company", "TEXT DEFAULT ''"),
     ("ai_is_open", "TEXT DEFAULT ''"),
     ("parked_reason", "TEXT DEFAULT ''"),
+    ("call_count", "INTEGER DEFAULT 0"),
+    ("last_call_at", "TEXT DEFAULT ''"),
 ]
 
 
@@ -394,6 +416,39 @@ def row_to_dict(r: sqlite3.Row) -> dict:
         else:
             d[f] = [] if f != "contact_source" else {}
     return d
+
+
+# ── попытки дозвона ──────────────────────────────────────────────────────────
+
+def add_call(lead_id: int, login: str, outcome: str) -> dict:
+    """Пишет попытку дозвона и обновляет счётчики лида. Отдаёт новые счётчики.
+
+    Счётчики в leads дублируют calls намеренно: список рисуется одним запросом,
+    и подзапрос на каждую строку там не нужен. Источник правды — таблица calls,
+    счётчики живут только ради показа.
+    """
+    c = conn()
+    ts = int(time.time())
+    c.execute("INSERT INTO calls (lead_id, login, ts, outcome) VALUES (?,?,?,?)",
+              (lead_id, login or "", ts, outcome))
+    c.execute("UPDATE leads SET call_count = COALESCE(call_count, 0) + 1, "
+              "last_call_at = ? WHERE id = ?", (str(ts), lead_id))
+    c.commit()
+    return {"call_count": call_count(lead_id), "last_call_at": str(ts)}
+
+
+def call_count(lead_id: int) -> int:
+    """Считаем по calls, а не по счётчику: счётчик мог отстать от правды."""
+    return conn().execute(
+        "SELECT COUNT(*) n FROM calls WHERE lead_id=?", (lead_id,)).fetchone()["n"]
+
+
+def call_ts(value) -> int:
+    """last_call_at лежит строкой (так объявлена колонка) — приводим к числу."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ── журнал запусков ──────────────────────────────────────────────────────────

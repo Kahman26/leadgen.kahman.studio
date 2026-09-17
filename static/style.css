@@ -214,7 +214,14 @@ td .sub { color: var(--muted); font-size: 12px; }
 .st { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
 .st.deal { color: var(--ok); border-color: var(--ok); }
 .st.refused { color: var(--muted); }
-.st.in_work, .st.contacted { color: var(--accent); border-color: var(--accent); }
+.st.in_work, .st.contacted, .st.audit, .st.proposal { color: var(--accent); border-color: var(--accent); }
+.st.no_answer { color: var(--warm); border-color: var(--warm); }
+/* Три попытки и больше — по лиду пора принимать решение, а не звонить дальше. */
+.st .tries.warn { color: var(--hot); }
+
+/* Попытки дозвона в карточке. */
+.calls { margin-top: 10px; font-size: 13px; }
+.calls button { margin-top: 8px; }
 
 /* ── рабочая область: таблица слева, карточка справа ────────────────────── */
 /* Карточка стоит рядом с таблицей, а не поверх неё: ничего не перекрывается

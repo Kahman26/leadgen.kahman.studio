@@ -41,6 +41,23 @@ def local(ts):
     return EPOCH + timedelta(seconds=ts + config.TZ_OFFSET_HOURS * 3600)
 
 
+MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня",
+          "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+
+def stamp(ts):
+    """unix → «18.09.2026, 14:32» в часовом поясе города."""
+    return local(ts).strftime("%d.%m.%Y, %H:%M") if ts else ""
+
+
+def day_text(ts):
+    """unix → «14 сентября»: короткая форма, когда точное время не важно."""
+    if not ts:
+        return ""
+    d = local(ts)
+    return f"{d.day} {MONTHS[d.month - 1]}"
+
+
 def _day_of(ts):
     return local(ts).date().isoformat()
 
