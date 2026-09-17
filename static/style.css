@@ -163,10 +163,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft
 table { width: 100%; border-collapse: collapse; }
 th {
   text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
-  padding: 8px 9px; border-bottom: 1px solid var(--line);
+  padding: 8px 6px; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: var(--panel); white-space: nowrap;
 }
-td { padding: 8px 9px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+td { padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 
 /* Колонки, кроме названия, живут по содержимому и не растягиваются.
    Порядок: 1 объект, 2 признак, 3 мой приоритет, 4 балл, 5 контакты,
@@ -276,7 +276,20 @@ td .sub { color: var(--muted); font-size: 12px; }
 /* ── рабочая область: таблица слева, карточка справа ────────────────────── */
 /* Карточка стоит рядом с таблицей, а не поверх неё: ничего не перекрывается
    и строки списка не нужно затемнять. */
-.workspace { display: flex; gap: 14px; align-items: flex-start; }
+.workspace { display: flex; gap: 8px; align-items: flex-start; }
+
+/* Ползунок ширины. Липнет так же, как карточка: до него должно быть можно
+   дотянуться из любого места длинного списка, а не только сверху. */
+.splitter {
+  flex: 0 0 7px; position: sticky; top: 74px;
+  height: calc(100vh - 96px); border-radius: 4px;
+  cursor: col-resize; background: transparent;
+  transition: background .12s;
+}
+.splitter:hover, body.resizing .splitter { background: var(--accent); }
+/* Пока тянут, курсор и запрет выделения нужны на всей странице: указатель
+   уходит далеко за пределы самого ползунка. */
+body.resizing { cursor: col-resize; user-select: none; }
 .main { flex: 1 1 auto; min-width: 0; }
 .pager { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
 
@@ -331,6 +344,7 @@ textarea { width: 100%; min-height: 80px; resize: vertical; }
 /* На узком экране места на две колонки нет — карточка выезжает поверх */
 @media (max-width: 1180px) {
   .workspace { display: block; }
+  .splitter { display: none; }
   .side {
     position: fixed; top: 0; right: 0; bottom: 0;
     width: min(520px, 100%); max-height: none;

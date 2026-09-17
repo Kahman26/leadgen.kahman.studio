@@ -10,6 +10,7 @@ let statFilter = null;      // быстрый фильтр по клику на 
 let pollTimer = null;
 let selectedId = null;   // какой лид открыт в правой панели
 let showAll = false;     // развёрнута ли дополнительная информация в карточке
+let histOpen = false;    // развёрнута ли история изменений
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -116,7 +117,7 @@ async function loadLeads() {
     <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden ' : ''}${String(l.id) === String(selectedId) ? 'selected' : ''}">
       <td>
         <div class="name">${esc(l.name)}</div>
-        <div class="sub">${esc(l.category || '')}${l.address ? ' · ' + esc(l.address) : ''}</div>
+        <div class="sub">${esc(l.category || '')}</div>
       </td>
       <td><span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span></td>
       <td class="num">${l.priority
@@ -140,6 +141,61 @@ async function loadLeads() {
   $('next').disabled = offset + PAGE >= total;
 
   [...$('rows').children].forEach((tr) => tr.onclick = () => openLead(tr.dataset.id));
+}
+
+/* ── ширина карточки ──────────────────────────────────────────────────── */
+
+// На широком мониторе хочется больше карточки, на ноутбуке — больше таблицы.
+// Это дело вкуса, поэтому ширину задаёт человек, а не вёрстка, и она
+// запоминается до следующего раза.
+const SIDE_DEFAULT = 400;
+const SIDE_MIN = 320;
+
+function setSideWidth(px) {
+  // Верхняя граница — доля экрана, а не число: на 4K потолок в 800 пикселей
+  // был бы бессмысленным, а на 1366 — недостижимым.
+  const max = Math.max(SIDE_MIN, Math.round(window.innerWidth * 0.72));
+  const w = Math.round(Math.max(SIDE_MIN, Math.min(px, max)));
+  $('drawer').style.flexBasis = w + 'px';
+  try {
+    localStorage.setItem('sideWidth', w);
+  } catch (e) {
+    // Приватный режим запрещает запись — ширина просто не переживёт перезагрузку
+  }
+}
+
+function wireSplitter() {
+  const sp = $('splitter');
+  if (!sp) return;
+
+  sp.onpointerdown = (e) => {
+    e.preventDefault();
+    // Границу воркспейса берём один раз: во время перетаскивания она
+    // не меняется, а getBoundingClientRect на каждое движение — лишняя работа.
+    const right = document.querySelector('.workspace').getBoundingClientRect().right;
+    sp.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+
+    const move = (ev) => setSideWidth(right - ev.clientX);
+    const up = () => {
+      document.body.classList.remove('resizing');
+      sp.removeEventListener('pointermove', move);
+      sp.removeEventListener('pointerup', up);
+      sp.removeEventListener('pointercancel', up);
+    };
+    sp.addEventListener('pointermove', move);
+    sp.addEventListener('pointerup', up);
+    sp.addEventListener('pointercancel', up);
+  };
+
+  // Поймать исходную ширину ползунком трудно, а вернуться к ней хочется.
+  sp.ondblclick = () => setSideWidth(SIDE_DEFAULT);
+
+  let saved = SIDE_DEFAULT;
+  try {
+    saved = Number(localStorage.getItem('sideWidth')) || SIDE_DEFAULT;
+  } catch (e) { /* читать тоже может быть нельзя */ }
+  setSideWidth(saved);
 }
 
 /* ── попытки дозвона ──────────────────────────────────────────────────── */
@@ -448,7 +504,7 @@ let histSystem = false;
 
 async function loadLeadHistory(id, all) {
   const box = $('leadHistory');
-  if (!box) return;
+  if (!box || !histOpen) return;
   let data;
   try {
     data = await api(`/api/lead/${id}/history?system=${histSystem ? 1 : 0}`);
@@ -672,8 +728,10 @@ async function openLead(id) {
     </div>
 
     <div class="section">
-      <h3>История изменений</h3>
-      <div id="leadHistory" class="muted">загружаем…</div>
+      <h3>История изменений
+        <button class="linkbtn" id="toggleHist">${
+          histOpen ? 'Свернуть' : 'Смотреть полностью'}</button></h3>
+      <div id="leadHistory" class="muted" ${histOpen ? '' : 'hidden'}>загружаем…</div>
     </div>
 
     <div class="dangerzone">
@@ -752,6 +810,13 @@ async function openLead(id) {
       loadLeads();
     };
   }
+
+  $('toggleHist').onclick = () => {
+    histOpen = !histOpen;
+    $('leadHistory').hidden = !histOpen;
+    $('toggleHist').textContent = histOpen ? 'Свернуть' : 'Смотреть полностью';
+    if (histOpen) loadLeadHistory(id);
+  };
 
   $('toggleMore').onclick = () => {
     showAll = !showAll;
@@ -1005,6 +1070,7 @@ async function init() {
   $('optDadata').checked = CFG.dadata_ready;
   $('optDadata').disabled = !CFG.dadata_ready;
 
+  wireSplitter();
   $('drawer').innerHTML = PLACEHOLDER;
 
   await loadStats();
