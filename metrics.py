@@ -174,7 +174,7 @@ def funnel(day_from: str, day_to: str, deals: dict, firsts: dict) -> dict:
     steps = [
         {"key": "base", "title": "Лидов в базе", "value": total,
          "note": f"добавлено за период: {added}"},
-        {"key": "in_work", "title": "Взято в работу", "value": in_work,
+        {"key": "in_work", "title": "Ручная проверка", "value": in_work,
          "of": total},
         {"key": "calls", "title": "Попыток дозвона", "value": calls,
          "note": f"лидов обзвонено: {dialed}"},

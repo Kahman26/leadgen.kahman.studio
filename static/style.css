@@ -13,6 +13,7 @@
   --ok: #067647;
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .1);
   --radius: 10px;
+  --headh: 34px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -54,11 +55,14 @@ body {
 
 /* ── шапка ──────────────────────────────────────────────────────────────── */
 header {
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 14px 20px; background: var(--panel);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 0 20px; min-height: var(--headh); background: var(--panel);
   border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20;
 }
-header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+/* Кнопки в шапке ниже обычных: иначе высоту задают они, а не текст. */
+header button, header .btn { padding: 3px 10px; font-size: 13px; }
+header button.burger { padding: 2px 10px; font-size: 16px; }
 header .city { color: var(--muted); font-size: 13px; }
 header .spacer { flex: 1; }
 
@@ -172,7 +176,18 @@ td { padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: mid
    Порядок: 1 объект, 2 признак, 3 мой приоритет, 4 балл, 5 контакты,
    6 сайт, 7 статус — при добавлении колонки номера надо править здесь. */
 th.num, td.num { width: 1%; text-align: right; }
-td:nth-child(2), td:nth-child(6), td:nth-child(7) { width: 1%; white-space: nowrap; }
+td:nth-child(6), td:nth-child(7) { width: 1%; white-space: nowrap; }
+
+/* Признак переносим в две строки: одной строкой «Сайт на дешёвом
+   конструкторе» растягивает колонку на треть таблицы и отъедает место
+   у названия — а название читают в первую очередь. */
+/* Ширина задана числом, а не по содержимому: с width:1% колонка сжимается
+   до самого длинного слова, и подпись рвётся на три строки вместо двух.
+   «Признак» и «Мой» при этом стоят вплотную — воздух между бейджем и цифрой
+   лучше пригодится карточке. */
+th:nth-child(2), td:nth-child(2) { width: 142px; padding-right: 2px; }
+td:nth-child(2) .badge { white-space: normal; line-height: 1.25; }
+th:nth-child(3), td:nth-child(3) { padding-left: 2px; }
 
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--accent-soft); }
@@ -281,8 +296,8 @@ td .sub { color: var(--muted); font-size: 12px; }
 /* Ползунок ширины. Липнет так же, как карточка: до него должно быть можно
    дотянуться из любого места длинного списка, а не только сверху. */
 .splitter {
-  flex: 0 0 7px; position: sticky; top: 74px;
-  height: calc(100vh - 96px); border-radius: 4px;
+  flex: 0 0 7px; position: sticky; top: calc(var(--headh) + 8px);
+  height: calc(100vh - var(--headh) - 30px); border-radius: 4px;
   cursor: col-resize; background: transparent;
   transition: background .12s;
 }
@@ -296,8 +311,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .side {
   flex: 0 0 400px;
   position: sticky;
-  top: 74px;
-  max-height: calc(100vh - 96px);
+  top: calc(var(--headh) + 8px);
+  max-height: calc(100vh - var(--headh) - 30px);
   overflow-y: auto;
   overflow-x: hidden;          /* страховка: вбок панель не ездит никогда */
   background: var(--panel);

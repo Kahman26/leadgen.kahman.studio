@@ -96,7 +96,7 @@ function funnelBlock(f) {
       </table>
       <div class="mnote">
         Процент дозвона: <b>${f.dial_rate} %</b> ·
-        сквозная конверсия «взято в работу → сделка»: <b>${f.overall} %</b>
+        сквозная конверсия «ручная проверка → сделка»: <b>${f.overall} %</b>
       </div>
     </section>`;
 }

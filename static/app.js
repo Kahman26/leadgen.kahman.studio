@@ -148,8 +148,15 @@ async function loadLeads() {
 // На широком мониторе хочется больше карточки, на ноутбуке — больше таблицы.
 // Это дело вкуса, поэтому ширину задаёт человек, а не вёрстка, и она
 // запоминается до следующего раза.
-const SIDE_DEFAULT = 400;
 const SIDE_MIN = 320;
+
+// По умолчанию делим экран пополам: карточку читают не реже списка, и на
+// широком мониторе половина ей не жалко. Считаем от рабочей области, а не
+// от окна: у неё свои поля.
+function defaultSideWidth() {
+  const ws = document.querySelector('.workspace');
+  return Math.round((ws ? ws.getBoundingClientRect().width : window.innerWidth) / 2);
+}
 
 function setSideWidth(px) {
   // Верхняя граница — доля экрана, а не число: на 4K потолок в 800 пикселей
@@ -188,14 +195,14 @@ function wireSplitter() {
     sp.addEventListener('pointercancel', up);
   };
 
-  // Поймать исходную ширину ползунком трудно, а вернуться к ней хочется.
-  sp.ondblclick = () => setSideWidth(SIDE_DEFAULT);
+  // Поймать ровную половину ползунком трудно, а вернуться к ней хочется.
+  sp.ondblclick = () => setSideWidth(defaultSideWidth());
 
-  let saved = SIDE_DEFAULT;
+  let saved = 0;
   try {
-    saved = Number(localStorage.getItem('sideWidth')) || SIDE_DEFAULT;
+    saved = Number(localStorage.getItem('sideWidth')) || 0;
   } catch (e) { /* читать тоже может быть нельзя */ }
-  setSideWidth(saved);
+  setSideWidth(saved || defaultSideWidth());
 }
 
 /* ── попытки дозвона ──────────────────────────────────────────────────── */
