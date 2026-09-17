@@ -175,6 +175,28 @@ CREATE TABLE IF NOT EXISTS calls (
 );
 
 
+-- Заметки по лиду лентой, а не одним полем: с базой работают несколько
+-- человек, и в общем поле каждый затирал бы чужой текст. Удаление мягкое —
+-- журнал изменений не должен ссылаться на исчезнувшие записи.
+CREATE TABLE IF NOT EXISTS lead_notes (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL,
+    login   TEXT NOT NULL,
+    ts      INTEGER NOT NULL,        -- unix-время, UTC
+    text    TEXT NOT NULL,
+    deleted INTEGER DEFAULT 0
+);
+
+
+-- Отметки о разовых переделках базы. Нужна, чтобы перенос данных не повторялся
+-- при каждом запуске: «в таблице пусто» плохой признак — человек мог всё
+-- удалить сам, и тогда перенос вернул бы убранное.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+
 -- Журнал изменений: кто, когда и что поменял. Пишется на уровне приложения,
 -- а не триггером: триггер не знает, какой человек вошёл, а именно это и нужно,
 -- когда разбираешь чужую ошибку. Имя объекта продублировано намеренно —
@@ -232,6 +254,7 @@ CREATE INDEX IF NOT EXISTS idx_history_ts    ON history(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_history_login ON history(login, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_calls_lead ON calls(lead_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_calls_ts   ON calls(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_notes_lead ON lead_notes(lead_id, ts DESC);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
@@ -283,6 +306,7 @@ def init():
     # на колонки, которых в старой базе ещё не было.
     c.executescript(INDEXES)
     c.commit()
+    _migrate_notes(c)
 
 
 SERVER_DB = "/var/lib/leadgen/leads.db"
@@ -416,6 +440,84 @@ def row_to_dict(r: sqlite3.Row) -> dict:
         else:
             d[f] = [] if f != "contact_source" else {}
     return d
+
+
+# ── заметки ──────────────────────────────────────────────────────────────────
+
+# Тот же автор-автомат, что и в history.SYSTEM. Литерал, а не импорт: history
+# знает про db, и на уровне модуля получился бы круг.
+SYSTEM_LOGIN = "@system"
+
+
+def _migrate_notes(c):
+    """Переносит старую одиночную заметку каждого лида в ленту. Один раз.
+
+    Автор берётся из журнала: последняя правка поля note и есть тот, кто писал.
+    Если правки нет — заметка старше журнала, и автора честнее не выдумывать.
+    """
+    if c.execute("SELECT 1 FROM meta WHERE key='notes_migrated'").fetchone():
+        return 0
+    moved = 0
+    for r in c.execute("SELECT id, note FROM leads WHERE COALESCE(note,'') <> ''").fetchall():
+        h = c.execute("SELECT login, ts FROM history WHERE lead_id=? AND field='note' "
+                      "ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
+        c.execute("INSERT INTO lead_notes (lead_id, login, ts, text) VALUES (?,?,?,?)",
+                  (r["id"], h["login"] if h else SYSTEM_LOGIN,
+                   h["ts"] if h else int(time.time()), r["note"]))
+        moved += 1
+    c.execute("INSERT INTO meta (key, value) VALUES ('notes_migrated', ?)", (now(),))
+    c.commit()
+    return moved
+
+
+def notes_for(lead_id: int) -> list:
+    """Лента заметок лида, новые сверху. Удалённые не отдаём."""
+    # Сортируем по времени, а не по id: у перенесённых заметок дата взята
+    # из журнала и может быть старше, чем у записанных раньше них строк.
+    return [dict(r) for r in conn().execute(
+        "SELECT id, lead_id, login, ts, text FROM lead_notes "
+        "WHERE lead_id=? AND deleted=0 ORDER BY ts DESC, id DESC", (lead_id,))]
+
+
+def _sync_note(c, lead_id: int):
+    """leads.note — зеркало последней заметки.
+
+    Колонку не убираем: на неё опираются выгрузка в CSV и поиск по списку.
+    Пересчитываем и при удалении тоже, иначе в выгрузке останется текст,
+    которого в ленте уже нет.
+    """
+    r = c.execute("SELECT text FROM lead_notes WHERE lead_id=? AND deleted=0 "
+                  "ORDER BY ts DESC, id DESC LIMIT 1", (lead_id,)).fetchone()
+    c.execute("UPDATE leads SET note=? WHERE id=?", (r["text"] if r else "", lead_id))
+
+
+def add_note(lead_id: int, login: str, text: str) -> dict:
+    c = conn()
+    ts = int(time.time())
+    cur = c.execute("INSERT INTO lead_notes (lead_id, login, ts, text) VALUES (?,?,?,?)",
+                    (lead_id, login or "", ts, text))
+    _sync_note(c, lead_id)
+    c.commit()
+    return {"id": cur.lastrowid, "lead_id": lead_id, "login": login, "ts": ts, "text": text}
+
+
+def note_by_id(note_id: int):
+    return conn().execute(
+        "SELECT * FROM lead_notes WHERE id=? AND deleted=0", (note_id,)).fetchone()
+
+
+def delete_note(note) -> None:
+    c = conn()
+    c.execute("UPDATE lead_notes SET deleted=1 WHERE id=?", (note["id"],))
+    _sync_note(c, note["lead_id"])
+    c.commit()
+
+
+def last_note_authors() -> dict:
+    """{id лида: автор последней заметки} — одним запросом, для выгрузки."""
+    return {r["lead_id"]: r["login"] for r in conn().execute(
+        "SELECT lead_id, login, MAX(ts * 1000000 + id) FROM lead_notes "
+        "WHERE deleted=0 GROUP BY lead_id")}
 
 
 # ── попытки дозвона ──────────────────────────────────────────────────────────

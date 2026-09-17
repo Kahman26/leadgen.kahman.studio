@@ -185,6 +185,63 @@ function bindCall(id, l) {
   };
 }
 
+/* ── заметки ──────────────────────────────────────────────────────────── */
+
+// Тон автора считаем из логина: один и тот же человек всегда одного цвета,
+// а новый сотрудник получает свой сам, без правки кода. В CSS уходит только
+// тон — насыщенность и светлота там свои для светлой и тёмной темы.
+function authorHue(login) {
+  let sum = 0;
+  for (const ch of String(login || '')) sum += ch.codePointAt(0);
+  return sum % 360;
+}
+
+function noteRow(n) {
+  // Автора перенесённой заметки в журнале не было — выдумывать его не станем.
+  const who = n.system ? 'перенесено из старой карточки' : n.login;
+  const canDelete = !n.system && (n.login === CFG.login || CFG.is_admin);
+  return `
+    <div class="note" data-note="${n.id}" style="--hue:${authorHue(n.login)}">
+      <div class="nhead">
+        <span class="nwho">${esc(who)}</span>
+        <span class="nwhen">${esc(n.when)}</span>
+        ${canDelete ? '<button class="ndel" title="Удалить заметку">✕</button>' : ''}
+      </div>
+      <div class="ntext">${esc(n.text)}</div>
+    </div>`;
+}
+
+async function loadNotes(id) {
+  const box = $('noteFeed');
+  if (!box) return;
+  let data;
+  try {
+    data = await api(`/api/lead/${id}/notes`);
+  } catch (e) {
+    box.innerHTML = `<span class="muted">не удалось загрузить: ${esc(e.message)}</span>`;
+    return;
+  }
+  box.innerHTML = data.items.length
+    ? data.items.map(noteRow).join('')
+    : '<span class="muted">Заметок пока нет</span>';
+
+  box.querySelectorAll('[data-note] .ndel').forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm('Удалить заметку?')) return;
+      btn.disabled = true;
+      try {
+        await api('/api/note/' + btn.closest('[data-note]').dataset.note,
+                  { method: 'DELETE' });
+      } catch (e) {
+        btn.disabled = false;
+        alert('Не получилось удалить: ' + e.message);
+        return;
+      }
+      loadNotes(id); loadLeadHistory(id);
+    };
+  });
+}
+
 /* ── карточка лида ────────────────────────────────────────────────────── */
 
 // В карточке показываем последние правки. Полная лента по всем объектам —
@@ -404,10 +461,10 @@ async function openLead(id) {
     </div>
 
     <div class="section">
-      <h3>Заметка</h3>
-      <textarea id="noteBox" placeholder="Что сказали, когда перезвонить…">${esc(l.note || '')}</textarea>
-      <button id="saveNote" style="margin-top:8px">Сохранить заметку</button>
-      <span class="muted" id="noteSaved"></span>
+      <h3>Заметки</h3>
+      <textarea id="noteBox" placeholder="Что сказали, когда перезвонить…"></textarea>
+      <button id="addNoteBtn" style="margin-top:8px">Добавить заметку</button>
+      <div id="noteFeed" class="muted" style="margin-top:12px">загружаем…</div>
     </div>
 
     <div class="section">
@@ -446,13 +503,23 @@ async function openLead(id) {
 
   bindCall(id, l);
 
-  $('saveNote').onclick = async () => {
-    await api('/api/lead/' + id, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: $('noteBox').value }),
-    });
-    $('noteSaved').textContent = ' сохранено';
-    setTimeout(() => ($('noteSaved').textContent = ''), 1500);
+  $('addNoteBtn').onclick = async () => {
+    const text = $('noteBox').value.trim();
+    if (!text) return;
+    $('addNoteBtn').disabled = true;
+    try {
+      await api('/api/lead/' + id + '/notes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+    } catch (e) {
+      alert('Не получилось сохранить: ' + e.message);
+      $('addNoteBtn').disabled = false;
+      return;
+    }
+    $('noteBox').value = '';
+    $('addNoteBtn').disabled = false;
+    loadNotes(id); loadLeadHistory(id);
   };
 
   $('drawer').querySelectorAll('[data-prio]').forEach((b) => b.onclick = async () => {
@@ -466,6 +533,7 @@ async function openLead(id) {
     loadLeads();
   });
 
+  loadNotes(id);
   loadLeadHistory(id);
 
   $('aiLead').onclick = () => openResearch(l);

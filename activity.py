@@ -50,6 +50,24 @@ def stamp(ts):
     return local(ts).strftime("%d.%m.%Y, %H:%M") if ts else ""
 
 
+def when_text(ts):
+    """unix → «сегодня, 14:32» / «вчера, 09:10» / «14 сентября, 16:05».
+
+    В ленте заметок точная дата нужна редко: почти всё написано сегодня
+    или вчера, и относительная форма читается быстрее.
+    """
+    if not ts:
+        return ""
+    d = local(ts)
+    days = (local(int(time.time())).date() - d.date()).days
+    hm = d.strftime("%H:%M")
+    if days == 0:
+        return f"сегодня, {hm}"
+    if days == 1:
+        return f"вчера, {hm}"
+    return f"{d.day} {MONTHS[d.month - 1]}, {hm}"
+
+
 def day_text(ts):
     """unix → «14 сентября»: короткая форма, когда точное время не важно."""
     if not ts:

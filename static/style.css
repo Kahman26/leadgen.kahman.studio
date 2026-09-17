@@ -223,6 +223,22 @@ td .sub { color: var(--muted); font-size: 12px; }
 .calls { margin-top: 10px; font-size: 13px; }
 .calls button { margin-top: 8px; }
 
+/* Лента заметок. Тон берётся из логина автора: «это писал не я» видно раньше,
+   чем прочитан ник. Здесь только насыщенность и светлота — тон приходит
+   из разметки, иначе цвет пришлось бы держать в двух местах. */
+.note { border-left: 3px solid hsl(var(--hue, 220) 55% 45%); padding: 4px 0 4px 10px; margin-bottom: 12px; }
+.nhead { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+.nwho { color: hsl(var(--hue, 220) 55% 36%); font-weight: 600; }
+.nwhen { color: var(--muted); }
+.ndel { margin-left: auto; padding: 1px 7px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.ndel:hover { border-color: var(--hot); color: var(--hot); }
+.ntext { white-space: pre-wrap; font-size: 13px; }
+
+@media (prefers-color-scheme: dark) {
+  .note { border-left-color: hsl(var(--hue, 220) 60% 62%); }
+  .nwho { color: hsl(var(--hue, 220) 60% 72%); }
+}
+
 /* ── рабочая область: таблица слева, карточка справа ────────────────────── */
 /* Карточка стоит рядом с таблицей, а не поверх неё: ничего не перекрывается
    и строки списка не нужно затемнять. */

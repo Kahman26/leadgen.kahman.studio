@@ -309,10 +309,68 @@ def _record_call(login: str, lead, outcome: str) -> dict:
     return _with_calls(stats)
 
 
+def _note_view(n: dict) -> dict:
+    """Заметка для интерфейса: время словами и пометка о переносе.
+
+    Цвет автора считает фронтенд из логина — здесь он не нужен, а лишнее поле
+    в ответе только сбивает с толку.
+    """
+    return {
+        "id": n["id"],
+        "login": n["login"],
+        "text": n["text"],
+        "ts": n["ts"],
+        "when": activity.when_text(n["ts"]),
+        # Автора у перенесённых заметок не было в журнале — врать не будем.
+        "system": n["login"] == db.SYSTEM_LOGIN,
+    }
+
+
+def _add_note(login: str, lead, text: str) -> dict:
+    n = db.add_note(lead["id"], login, text)
+    # Без field: заметку нельзя откатить, её можно только удалить.
+    history.log(login, "note", lead=lead, new=text)
+    return _note_view(n)
+
+
+@app.get("/api/lead/{lead_id}/notes")
+def get_notes(lead_id: int):
+    return {"items": [_note_view(n) for n in db.notes_for(lead_id)]}
+
+
+@app.post("/api/lead/{lead_id}/notes")
+def post_note(request: Request, lead_id: int, payload: dict = Body(...)):
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "Пустую заметку сохранять незачем")
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    return _add_note(request.state.login, lead, text)
+
+
+@app.delete("/api/note/{note_id}")
+def delete_note(request: Request, note_id: int):
+    """Свою заметку убирает автор, чужую — только владелец базы."""
+    n = db.note_by_id(note_id)
+    if not n:
+        raise HTTPException(404, "Заметка не найдена")
+    who = request.state.login
+    if n["login"] != who and not auth.is_admin(who):
+        raise HTTPException(403, "Чужую заметку может удалить только владелец базы")
+    db.delete_note(n)
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (n["lead_id"],)).fetchone()
+    history.log(who, "note_del", lead=lead, new=n["text"])
+    return {"ok": True}
+
+
 @app.post("/api/lead/{lead_id}")
 def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
+    # Заметка теперь живёт лентой: старые клиенты и форма «+ Объект» шлют её
+    # тем же полем, поэтому здесь она уходит в ленту, а не переписывает поле.
+    note_text = (payload.get("note") or "").strip() if "note" in payload else ""
     fields = {k: v for k, v in payload.items()
-              if k in ("status", "note", "hidden", "hidden_reason", "priority")}
+              if k in ("status", "hidden", "hidden_reason", "priority")}
     if "hidden" in fields:
         fields["hidden"] = 1 if fields["hidden"] else 0
     if "priority" in fields:
@@ -327,7 +385,7 @@ def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
             if not 1 <= value <= 10:
                 raise HTTPException(400, "Приоритет — число от 1 до 10")
             fields["priority"] = value
-    if not fields:
+    if not fields and not note_text:
         raise HTTPException(400, "Нечего обновлять")
     if "status" in fields and fields["status"] not in STATUSES:
         raise HTTPException(400, "Неизвестный статус")
@@ -336,12 +394,15 @@ def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     if not before:
         raise HTTPException(404, "Лид не найден")
 
-    sets = ", ".join(f"{k}=?" for k in fields)
-    c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
-              list(fields.values()) + [db.now(), lead_id])
-    c.commit()
+    if fields:
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c.execute(f"UPDATE leads SET {sets}, updated_at=? WHERE id=?",
+                  list(fields.values()) + [db.now(), lead_id])
+        c.commit()
 
     who = request.state.login
+    if note_text:
+        _add_note(who, before, note_text)
     for field, value in fields.items():
         if history._text(before[field]) == history._text(value):
             continue
@@ -443,13 +504,13 @@ def create_lead(request: Request, payload: dict = Body(...)):
     ph = ", ".join("?" * len(fields))
     cur = c.execute(f"INSERT INTO leads ({', '.join(fields)}) VALUES ({ph})",
                     [processed.get(f) for f in fields])
-    if (payload.get("note") or "").strip():
-        c.execute("UPDATE leads SET note=? WHERE id=?",
-                  (payload["note"].strip(), cur.lastrowid))
     c.commit()
 
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     history.log(request.state.login, "create", lead=row, new=row["name"])
+    if (payload.get("note") or "").strip():
+        _add_note(request.state.login, row, payload["note"].strip())
+        row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     return db.row_to_dict(row)
 
 
@@ -721,6 +782,10 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
     w = csv.writer(buf, delimiter=";", quoting=csv.QUOTE_MINIMAL)
     w.writerow([title for _, title in EXPORT_COLUMNS])
 
+    # Авторы последних заметок — одним запросом на всю выгрузку, а не по
+    # запросу на строку: в выгрузку уходит вся база целиком.
+    authors = db.last_note_authors()
+
     for r in rows:
         d = db.row_to_dict(r)
         line = []
@@ -732,6 +797,9 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
                 v = ", ".join(f"{k}: {s}" for k, s in (v or {}).items())
             elif key == "status":
                 v = STATUSES.get(v, v)
+            elif key == "note" and v:
+                who = authors.get(d["id"])
+                v = f"{who}: {v}" if who and who != db.SYSTEM_LOGIN else v
             line.append(v if v is not None else "")
         w.writerow(line)
 
