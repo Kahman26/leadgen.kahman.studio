@@ -185,6 +185,200 @@ function bindCall(id, l) {
   };
 }
 
+/* ── сделки и платежи ─────────────────────────────────────────────────── */
+
+// Весь блок — только для владельца базы. Продажник вместо него видит одну
+// строку без сумм: своё вознаграждение он не должен считать по карточке.
+
+const rub = (n) => (Number(n) || 0).toLocaleString('ru-RU') + '\u00a0₽';
+
+// Сегодняшний день строкой для поля даты. toISOString() дал бы UTC и в
+// Екатеринбурге до пяти утра подставлял вчерашнее число.
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function sellerOptions(sellers, chosen) {
+  return sellers.map((x) =>
+    `<option value="${esc(x)}"${x === chosen ? ' selected' : ''}>${esc(x)}</option>`).join('');
+}
+
+function dealForm(sellers, id) {
+  return `
+    <div class="dealform" id="${id}">
+      <div class="drow">
+        <select data-f="kind">
+          <option value="project">Проект</option>
+          <option value="retainer">Абонентка</option>
+        </select>
+        <input type="number" data-f="amount" placeholder="Сумма, ₽" min="1" step="1">
+      </div>
+      <div class="drow">
+        <input type="date" data-f="contract_at" value="${todayISO()}">
+        <select data-f="owner_login">${sellerOptions(sellers, CFG.login)}</select>
+      </div>
+      <label class="dcheck"><input type="checkbox" data-f="is_repeat"> повторная сделка</label>
+    </div>`;
+}
+
+function paymentRows(d) {
+  if (!d.payments.length) return '<div class="muted dpay">Платежей пока нет</div>';
+  return d.payments.map((p) => `
+    <div class="dpay" data-pay="${p.id}">
+      <span class="dpdate">${esc(p.paid_text)}</span>
+      <span class="dpsum">${esc(rub(p.amount))}</span>
+      <span class="muted">${esc(p.kind_text)}</span>
+      <button class="ndel" title="Удалить платёж">✕</button>
+    </div>`).join('');
+}
+
+// У абонентки amount — месячный платёж, а не план по договору: «поступило
+// столько-то из месячного» читалось бы как ошибка. Поэтому у неё ни полосы
+// выполнения, ни доли первой оплаты — только сумма и число месяцев.
+function dealCard(d) {
+  const project = d.kind === 'project';
+  const target = project ? rub(d.amount) : rub(d.amount) + ' / мес';
+  const totals = project
+    ? `Поступило ${esc(rub(d.paid))} из ${esc(rub(d.amount))}${
+        d.left ? ', остаток ' + esc(rub(d.left)) : ''}${
+        d.payments.length ? ` · первая оплата ${d.first_share}%` : ''}`
+    : `Поступило ${esc(rub(d.paid))}${
+        d.months ? ` за ${d.months} мес.` : ''}`;
+  return `
+    <div class="deal" data-deal="${d.id}">
+      <div class="dhead">
+        <b>${esc(d.kind_text)}</b>
+        <span>${esc(target)}</span>
+        <span class="muted">${esc(d.contract_text)}</span>
+        <span class="muted">${esc(d.owner_login)}</span>
+        ${d.is_repeat ? '<span class="dtag">повторная</span>' : ''}
+        ${d.payments.length ? '' : '<button class="ndel ddel" title="Удалить сделку">✕</button>'}
+      </div>
+      ${project ? `<div class="dbar"><i style="width:${d.progress}%"></i></div>` : ''}
+      <div class="dsum muted">${totals}</div>
+      ${d.low_first ? `<div class="dwarn">меньше ${CFG.bonus_min_share || 30}\u00a0% — не идёт в зачёт премии продажнику</div>` : ''}
+      <div class="dpays">${paymentRows(d)}</div>
+      <button class="dpayadd">+ оплата</button>
+      <div class="payform" hidden>
+        <div class="drow">
+          <input type="number" data-f="amount" placeholder="Сумма, ₽" min="1" step="1">
+          <input type="date" data-f="paid_at" value="${todayISO()}">
+        </div>
+        <div class="drow">
+          <select data-f="kind">
+            <option value="first">Первая</option>
+            <option value="monthly">Месячный</option>
+            <option value="final">Финальная</option>
+            <option value="other">Прочее</option>
+          </select>
+          <button class="primary paysave">Внести</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function readForm(box) {
+  const out = {};
+  box.querySelectorAll('[data-f]').forEach((el) => {
+    out[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return out;
+}
+
+async function loadDeals(id) {
+  const box = $('dealBox');
+  if (!box) return;
+  let data;
+  try {
+    data = await api(`/api/lead/${id}/deals`);
+  } catch (e) {
+    box.innerHTML = `<span class="muted">не удалось загрузить: ${esc(e.message)}</span>`;
+    return;
+  }
+  CFG.bonus_min_share = data.bonus_min_share;
+
+  box.innerHTML = data.items.map(dealCard).join('')
+    + `<button id="newDeal">Завести сделку</button>
+       <div id="newDealForm" hidden>
+         ${dealForm(data.sellers, 'newDealFields')}
+         <button class="primary" id="saveDeal">Сохранить сделку</button>
+       </div>`;
+
+  $('newDeal').onclick = () => {
+    $('newDeal').hidden = true;
+    $('newDealForm').hidden = false;
+  };
+  $('saveDeal').onclick = async () => {
+    $('saveDeal').disabled = true;
+    try {
+      await api(`/api/lead/${id}/deals`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(readForm($('newDealFields'))),
+      });
+    } catch (e) {
+      alert('Не получилось завести сделку: ' + e.message);
+      $('saveDeal').disabled = false;
+      return;
+    }
+    loadDeals(id); loadLeadHistory(id);
+  };
+
+  box.querySelectorAll('.deal').forEach((el) => {
+    const dealId = el.dataset.deal;
+
+    el.querySelector('.dpayadd').onclick = () => {
+      const f = el.querySelector('.payform');
+      f.hidden = !f.hidden;
+    };
+
+    el.querySelector('.paysave').onclick = async () => {
+      const btn = el.querySelector('.paysave');
+      btn.disabled = true;
+      try {
+        await api(`/api/deal/${dealId}/payments`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(readForm(el.querySelector('.payform'))),
+        });
+      } catch (e) {
+        alert('Не получилось внести платёж: ' + e.message);
+        btn.disabled = false;
+        return;
+      }
+      // Первый платёж переводит лид в «Сделку» — карточку и список надо
+      // перечитать целиком, статус там уже другой.
+      await openLead(id);
+      loadLeads(); loadStats();
+    };
+
+    const del = el.querySelector('.ddel');
+    if (del) del.onclick = async () => {
+      if (!confirm('Удалить сделку?')) return;
+      try {
+        await api('/api/deal/' + dealId, { method: 'DELETE' });
+      } catch (e) {
+        alert('Не получилось удалить: ' + e.message);
+        return;
+      }
+      loadDeals(id); loadLeadHistory(id);
+    };
+
+    el.querySelectorAll('[data-pay] .ndel').forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm('Удалить платёж? Статус лида при этом не изменится.')) return;
+        try {
+          await api('/api/payment/' + btn.closest('[data-pay]').dataset.pay,
+                    { method: 'DELETE' });
+        } catch (e) {
+          alert('Не получилось удалить: ' + e.message);
+          return;
+        }
+        loadDeals(id); loadLeadHistory(id);
+      };
+    });
+  });
+}
+
 /* ── заметки ──────────────────────────────────────────────────────────── */
 
 // Тон автора считаем из логина: один и тот же человек всегда одного цвета,
@@ -460,6 +654,16 @@ async function openLead(id) {
       <div id="callBox">${callBlock(l)}</div>
     </div>
 
+    ${CFG.is_admin ? `
+    <div class="section">
+      <h3>Сделка</h3>
+      <div id="dealBox" class="muted">загружаем…</div>
+    </div>` : (l.deal_closed ? `
+    <div class="section">
+      <h3>Сделка</h3>
+      <div class="dclosed">Сделка закрыта ${esc(l.deal_closed)}</div>
+    </div>` : '')}
+
     <div class="section">
       <h3>Заметки</h3>
       <textarea id="noteBox" placeholder="Что сказали, когда перезвонить…"></textarea>
@@ -534,6 +738,7 @@ async function openLead(id) {
   });
 
   loadNotes(id);
+  if (CFG.is_admin) loadDeals(id);
   loadLeadHistory(id);
 
   $('aiLead').onclick = () => openResearch(l);

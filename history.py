@@ -36,6 +36,8 @@ ACTIONS = {
     "show":     "Возвращён в работу",
     "note":     "Заметка",
     "note_del": "удалил заметку",
+    "deal":     "сделка",
+    "payment":  "оплата",
     "website":  "Адрес сайта",
     "research": "Результат автопроверки",
     "unlock":   "Снята защита правок",
@@ -50,6 +52,11 @@ ACTIONS = {
 # только зеркало последней. Откат зеркала ленту не изменит и разведёт их.
 UNDOABLE = {"edit", "status", "priority", "hide", "show", "website",
             "research", "revert"}
+
+# Денежные действия. В карточке их видит только владелец базы: суммы сделок
+# и поступлений не та информация, которую продажник должен читать по своему же
+# лиду — по ним считается его собственное вознаграждение.
+MONEY_ACTIONS = {"deal", "payment"}
 
 # Служебные колонки: их журнал не восстанавливает, даже если запись о них есть.
 NEVER_WRITE = {"id", "source", "source_ref", "created_at", "updated_at"}
@@ -140,14 +147,21 @@ def _row(r):
     }
 
 
-def for_lead(lead_id, with_system=False, limit=200):
+def for_lead(lead_id, with_system=False, limit=200, with_money=True):
     """История одного объекта. Машинные строки по умолчанию скрыты: иначе
-    перепроверка сайта вытесняет из карточки то, что делал человек."""
+    перепроверка сайта вытесняет из карточки то, что делал человек.
+
+    with_money=False убирает строки про сделки и платежи — их показываем
+    только владельцу базы."""
     sql = "SELECT * FROM history WHERE lead_id=?"
     params = [lead_id]
     if not with_system:
         sql += " AND login <> ?"
         params.append(SYSTEM)
+    if not with_money:
+        ph = ",".join("?" * len(MONEY_ACTIONS))
+        sql += f" AND action NOT IN ({ph})"
+        params.extend(sorted(MONEY_ACTIONS))
     rows = db.conn().execute(sql + " ORDER BY id DESC LIMIT ?",
                              params + [limit]).fetchall()
     return [_row(r) for r in rows]

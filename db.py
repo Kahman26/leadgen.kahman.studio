@@ -175,6 +175,39 @@ CREATE TABLE IF NOT EXISTS calls (
 );
 
 
+-- Сделки по лиду. Цена договора и фактические поступления разведены
+-- намеренно: по договору с продажником вознаграждение считается от того,
+-- что реально пришло, а не от того, что подписали. Источник правды для всех
+-- денежных расчётов — таблица payments, а deals.amount только план.
+CREATE TABLE IF NOT EXISTS deals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id     INTEGER NOT NULL,
+    kind        TEXT NOT NULL,          -- project — разовая разработка, retainer — абонентка
+    title       TEXT DEFAULT '',
+    amount      INTEGER NOT NULL,       -- целые рубли; для retainer — месячный платёж
+    contract_at TEXT,                   -- дата договора, ISO
+    owner_login TEXT DEFAULT '',        -- кто привёл: по нему считается вознаграждение
+    is_repeat   INTEGER DEFAULT 0,      -- повторная сделка: по ней своя ставка
+    state       TEXT DEFAULT 'active',  -- active | done | cancelled
+    created_at  TEXT,
+    created_by  TEXT DEFAULT ''
+);
+
+
+-- Фактические поступления. Деньги целыми рублями: через плавающую точку
+-- их считать нельзя — копейки расходятся на первой же сотне строк.
+CREATE TABLE IF NOT EXISTS payments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id    INTEGER NOT NULL,
+    amount     INTEGER NOT NULL,
+    paid_at    TEXT,                    -- дата поступления, ISO
+    kind       TEXT DEFAULT 'other',    -- first | final | monthly | other
+    note       TEXT DEFAULT '',
+    created_at TEXT,
+    created_by TEXT DEFAULT ''
+);
+
+
 -- Заметки по лиду лентой, а не одним полем: с базой работают несколько
 -- человек, и в общем поле каждый затирал бы чужой текст. Удаление мягкое —
 -- журнал изменений не должен ссылаться на исчезнувшие записи.
@@ -255,6 +288,10 @@ CREATE INDEX IF NOT EXISTS idx_history_login ON history(login, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_calls_lead ON calls(lead_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_calls_ts   ON calls(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_notes_lead ON lead_notes(lead_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_deals_lead ON deals(lead_id);
+CREATE INDEX IF NOT EXISTS idx_deals_date ON deals(contract_at);
+CREATE INDEX IF NOT EXISTS idx_pay_deal   ON payments(deal_id);
+CREATE INDEX IF NOT EXISTS idx_pay_date   ON payments(paid_at);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
@@ -551,6 +588,125 @@ def call_ts(value) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+# ── сделки и платежи ─────────────────────────────────────────────────────────
+
+DEAL_KINDS = ("project", "retainer")
+DEAL_STATES = ("active", "done", "cancelled")
+PAYMENT_KINDS = ("first", "final", "monthly", "other")
+
+
+def _deal_totals(deal: dict, pays: list) -> dict:
+    """Считает по сделке то, что нужно и в карточке, и в договоре с продажником.
+
+    Всё считается от фактических поступлений: цена договора — это план,
+    а вознаграждение и премия завязаны на пришедшие деньги.
+    """
+    paid = sum(p["amount"] for p in pays)
+    amount = deal["amount"] or 0
+    # Первой считается самая ранняя по дате поступления, а не по порядку ввода:
+    # платежи заводят задним числом.
+    first = min(pays, key=lambda p: (p["paid_at"] or "", p["id"]))["amount"] if pays else 0
+    deal["payments"] = pays
+    deal["paid"] = paid
+    # Для абонентки остаток бессмыслен: там платят помесячно и бесконечно.
+    deal["left"] = max(amount - paid, 0) if deal["kind"] == "project" else 0
+    deal["first_amount"] = first
+    deal["months"] = len(pays) if deal["kind"] == "retainer" else 0
+    # Доля первой оплаты и полоса выполнения имеют смысл только для проекта:
+    # у абонентки amount — это месячный платёж, а не план по договору, и
+    # делить поступления на него нельзя.
+    if deal["kind"] == "project" and amount:
+        deal["first_share"] = round(first * 100 / amount) if first else 0
+        deal["progress"] = min(round(paid * 100 / amount), 100)
+    else:
+        deal["first_share"] = 0
+        deal["progress"] = 0
+    return deal
+
+
+def deals_for(lead_id: int) -> list:
+    """Сделки лида с платежами. Два запроса вместо запроса на сделку."""
+    c = conn()
+    deals = [dict(r) for r in c.execute(
+        "SELECT * FROM deals WHERE lead_id=? ORDER BY COALESCE(contract_at,'') DESC, id DESC",
+        (lead_id,))]
+    if not deals:
+        return []
+    ids = tuple(d["id"] for d in deals)
+    ph = ",".join("?" * len(ids))
+    by_deal = {}
+    for r in c.execute(f"SELECT * FROM payments WHERE deal_id IN ({ph}) "
+                       "ORDER BY COALESCE(paid_at,'') DESC, id DESC", ids):
+        by_deal.setdefault(r["deal_id"], []).append(dict(r))
+    return [_deal_totals(d, by_deal.get(d["id"], [])) for d in deals]
+
+
+def deal_by_id(deal_id: int):
+    return conn().execute("SELECT * FROM deals WHERE id=?", (deal_id,)).fetchone()
+
+
+def add_deal(lead_id: int, login: str, **f) -> int:
+    c = conn()
+    cur = c.execute(
+        "INSERT INTO deals (lead_id, kind, title, amount, contract_at, owner_login, "
+        "is_repeat, state, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (lead_id, f["kind"], f.get("title", ""), f["amount"], f.get("contract_at", ""),
+         f.get("owner_login", ""), 1 if f.get("is_repeat") else 0,
+         f.get("state", "active"), now(), login or ""))
+    c.commit()
+    return cur.lastrowid
+
+
+def update_deal(deal_id: int, fields: dict) -> None:
+    if not fields:
+        return
+    c = conn()
+    sets = ", ".join(f"{k}=?" for k in fields)
+    c.execute(f"UPDATE deals SET {sets} WHERE id=?", list(fields.values()) + [deal_id])
+    c.commit()
+
+
+def payments_count(deal_id: int) -> int:
+    return conn().execute(
+        "SELECT COUNT(*) n FROM payments WHERE deal_id=?", (deal_id,)).fetchone()["n"]
+
+
+def delete_deal(deal_id: int) -> None:
+    c = conn()
+    c.execute("DELETE FROM deals WHERE id=?", (deal_id,))
+    c.commit()
+
+
+def add_payment(deal_id: int, login: str, **f) -> int:
+    c = conn()
+    cur = c.execute(
+        "INSERT INTO payments (deal_id, amount, paid_at, kind, note, created_at, created_by) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (deal_id, f["amount"], f.get("paid_at", ""), f.get("kind", "other"),
+         f.get("note", ""), now(), login or ""))
+    c.commit()
+    return cur.lastrowid
+
+
+def payment_by_id(payment_id: int):
+    return conn().execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+
+
+def delete_payment(payment_id: int) -> None:
+    c = conn()
+    c.execute("DELETE FROM payments WHERE id=?", (payment_id,))
+    c.commit()
+
+
+def first_payment_at(lead_id: int) -> str:
+    """Дата самого раннего поступления по лиду. По договору это и есть дата,
+    когда сделка считается закрытой."""
+    r = conn().execute(
+        "SELECT MIN(COALESCE(p.paid_at,'')) d FROM payments p "
+        "JOIN deals dl ON dl.id = p.deal_id WHERE dl.lead_id=?", (lead_id,)).fetchone()
+    return (r["d"] or "") if r else ""
 
 
 # ── журнал запусков ──────────────────────────────────────────────────────────

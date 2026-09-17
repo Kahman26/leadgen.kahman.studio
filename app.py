@@ -4,6 +4,7 @@
 import csv
 import io
 import json
+from datetime import date
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Body, HTTPException, Request, Response, UploadFile, File
@@ -290,7 +291,11 @@ def get_lead(lead_id: int):
     r = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
     if not r:
         raise HTTPException(404, "Лид не найден")
-    return _with_calls(db.row_to_dict(r))
+    d = _with_calls(db.row_to_dict(r))
+    # Дата закрытия — не сумма: её видит и продажник, ему важно понимать,
+    # что по лиду уже заплатили. Деньги остаются в разделе для владельца.
+    d["deal_closed"] = _day_ru(db.first_payment_at(lead_id))
+    return d
 
 
 # Каким действием журнала записать правку каждого поля: «скрыт» и «статус»
@@ -426,6 +431,226 @@ def add_call(request: Request, lead_id: int, payload: dict = Body(default={})):
     if not lead:
         raise HTTPException(404, "Лид не найден")
     return _record_call(request.state.login, lead, outcome)
+
+
+# ── сделки и платежи ─────────────────────────────────────────────────────────
+#
+# Весь раздел закрыт _admin_only: выручка и вознаграждение продажника — не та
+# информация, которую сам продажник должен видеть в своей же карточке.
+
+DEAL_KIND_LABELS = {"project": "проект", "retainer": "абонентка"}
+PAYMENT_KIND_LABELS = {"first": "первая", "final": "финальная",
+                       "monthly": "месячный", "other": "прочее"}
+
+# Ниже этой доли первой оплаты сделка не идёт в зачёт премии продажнику —
+# условие из договора, и о нём легко забыть при вводе.
+BONUS_MIN_SHARE = 30
+
+# Неразрывный пробел: сумма не должна разрываться переносом строки.
+NBSP = " "
+
+
+def _rub(n) -> str:
+    """78500 -> «78 500 ₽». Пробел неразрывный: сумма не должна рваться переносом."""
+    return f"{int(n or 0):,}".replace(",", NBSP) + NBSP + "₽"
+
+
+def _money(value, what="Сумма") -> int:
+    """Рубли целым числом: деньги через плавающую точку считать нельзя."""
+    try:
+        n = int(str(value).replace(" ", "").replace(NBSP, ""))
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{what} — целое число рублей")
+    if n <= 0:
+        raise HTTPException(400, f"{what} должна быть больше нуля")
+    return n
+
+
+def _iso_date(value, what="Дата") -> str:
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(400, f"{what} обязательна")
+    try:
+        date.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(400, f"{what} — в формате ГГГГ-ММ-ДД")
+    return v
+
+
+def _seller(value) -> str:
+    """Продавец — из списка входящих в базу: отдельный справочник тут лишний."""
+    v = (value or "").strip()
+    if v not in auth.load_users():
+        raise HTTPException(400, "Выберите продавца из списка")
+    return v
+
+
+def _deal_text(d) -> str:
+    kind = DEAL_KIND_LABELS.get(d["kind"], d["kind"])
+    tail = ", повторная" if d["is_repeat"] else ""
+    return f"{kind}, {_rub(d['amount'])}{tail}"
+
+
+def _day_ru(iso: str) -> str:
+    """ISO-дату в привычный вид. Пустую строку не трогаем."""
+    try:
+        return date.fromisoformat(iso).strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return iso or ""
+
+
+def _lead_or_404(lead_id: int):
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    return lead
+
+
+def _close_lead(login: str, lead_id: int) -> None:
+    """Поступили деньги — лид закрыт.
+
+    По договору сделка считается закрытой в дату фактического поступления
+    первой оплаты, поэтому статус ставится сам. Обратно при удалении платежа
+    не откатываем: вернуть лид в работу — решение человека.
+    """
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not lead or lead["status"] == "deal":
+        return
+    db.conn().execute("UPDATE leads SET status='deal', updated_at=? WHERE id=?",
+                      (db.now(), lead_id))
+    db.conn().commit()
+    history.log(login, "status", lead=lead, field="status",
+                old=lead["status"], new="deal")
+
+
+def _deal_view(d: dict) -> dict:
+    """Сделка для интерфейса: подписи, даты и пометка про премию."""
+    d["kind_text"] = DEAL_KIND_LABELS.get(d["kind"], d["kind"])
+    d["contract_text"] = _day_ru(d.get("contract_at") or "")
+    # Условие про 30 % — из договора на разовую разработку; к абонентке,
+    # где платят помесячно, оно неприменимо.
+    d["low_first"] = (d["kind"] == "project" and bool(d["payments"])
+                      and d["first_share"] < BONUS_MIN_SHARE)
+    for p in d["payments"]:
+        p["kind_text"] = PAYMENT_KIND_LABELS.get(p["kind"], p["kind"])
+        p["paid_text"] = _day_ru(p.get("paid_at") or "")
+    return d
+
+
+@app.get("/api/lead/{lead_id}/deals")
+def get_deals(request: Request, lead_id: int):
+    _admin_only(request)
+    return {
+        "items": [_deal_view(d) for d in db.deals_for(lead_id)],
+        "sellers": sorted(auth.load_users()),
+        "bonus_min_share": BONUS_MIN_SHARE,
+    }
+
+
+@app.post("/api/lead/{lead_id}/deals")
+def create_deal(request: Request, lead_id: int, payload: dict = Body(...)):
+    who = _admin_only(request)
+    lead = _lead_or_404(lead_id)
+    kind = (payload.get("kind") or "").strip()
+    if kind not in db.DEAL_KINDS:
+        raise HTTPException(400, "Тип сделки — проект или абонентка")
+    deal_id = db.add_deal(
+        lead_id, who,
+        kind=kind,
+        title=(payload.get("title") or "").strip(),
+        amount=_money(payload.get("amount"), "Сумма договора"),
+        contract_at=_iso_date(payload.get("contract_at"), "Дата договора"),
+        owner_login=_seller(payload.get("owner_login")),
+        is_repeat=payload.get("is_repeat"),
+    )
+    history.log(who, "deal", lead=lead,
+                new="заведена: " + _deal_text(db.deal_by_id(deal_id)))
+    return {"id": deal_id}
+
+
+@app.post("/api/deal/{deal_id}")
+def edit_deal(request: Request, deal_id: int, payload: dict = Body(...)):
+    who = _admin_only(request)
+    deal = db.deal_by_id(deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+
+    fields = {}
+    if "kind" in payload:
+        if payload["kind"] not in db.DEAL_KINDS:
+            raise HTTPException(400, "Тип сделки — проект или абонентка")
+        fields["kind"] = payload["kind"]
+    if "amount" in payload:
+        fields["amount"] = _money(payload["amount"], "Сумма договора")
+    if "contract_at" in payload:
+        fields["contract_at"] = _iso_date(payload["contract_at"], "Дата договора")
+    if "owner_login" in payload:
+        fields["owner_login"] = _seller(payload["owner_login"])
+    if "is_repeat" in payload:
+        fields["is_repeat"] = 1 if payload["is_repeat"] else 0
+    if "title" in payload:
+        fields["title"] = (payload["title"] or "").strip()
+    if "state" in payload:
+        if payload["state"] not in db.DEAL_STATES:
+            raise HTTPException(400, "Неизвестное состояние сделки")
+        fields["state"] = payload["state"]
+    if not fields:
+        raise HTTPException(400, "Нечего обновлять")
+
+    db.update_deal(deal_id, fields)
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (deal["lead_id"],)).fetchone()
+    history.log(who, "deal", lead=lead,
+                new="изменена: " + _deal_text(db.deal_by_id(deal_id)))
+    return {"ok": True}
+
+
+@app.delete("/api/deal/{deal_id}")
+def remove_deal(request: Request, deal_id: int):
+    who = _admin_only(request)
+    deal = db.deal_by_id(deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+    if db.payments_count(deal_id):
+        raise HTTPException(400, "По сделке есть платежи — сначала удалите их")
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (deal["lead_id"],)).fetchone()
+    db.delete_deal(deal_id)
+    history.log(who, "deal", lead=lead, new="удалена: " + _deal_text(deal))
+    return {"ok": True}
+
+
+@app.post("/api/deal/{deal_id}/payments")
+def create_payment(request: Request, deal_id: int, payload: dict = Body(...)):
+    who = _admin_only(request)
+    deal = db.deal_by_id(deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+    kind = (payload.get("kind") or "other").strip()
+    if kind not in db.PAYMENT_KINDS:
+        raise HTTPException(400, "Неизвестный вид платежа")
+    amount = _money(payload.get("amount"), "Сумма платежа")
+    paid_at = _iso_date(payload.get("paid_at"), "Дата поступления")
+
+    pay_id = db.add_payment(deal_id, who, amount=amount, paid_at=paid_at, kind=kind,
+                            note=(payload.get("note") or "").strip())
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?", (deal["lead_id"],)).fetchone()
+    history.log(who, "payment", lead=lead, new=f"{_rub(amount)} от {_day_ru(paid_at)}")
+    _close_lead(who, deal["lead_id"])
+    return {"id": pay_id}
+
+
+@app.delete("/api/payment/{payment_id}")
+def remove_payment(request: Request, payment_id: int):
+    who = _admin_only(request)
+    pay = db.payment_by_id(payment_id)
+    if not pay:
+        raise HTTPException(404, "Платёж не найден")
+    deal = db.deal_by_id(pay["deal_id"])
+    lead = db.conn().execute("SELECT * FROM leads WHERE id=?",
+                             (deal["lead_id"],)).fetchone() if deal else None
+    db.delete_payment(payment_id)
+    history.log(who, "payment", lead=lead,
+                new=f"удалён платёж {_rub(pay['amount'])} от {_day_ru(pay['paid_at'])}")
+    return {"ok": True}
 
 
 def _find_duplicate(name, website):
@@ -951,8 +1176,9 @@ def lead_history(request: Request, lead_id: int, system: int = 0):
     """История одного объекта. Видна всем: знать, кто менял сайт, полезно обоим."""
     if not db.conn().execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
         raise HTTPException(404, "Лид не найден")
-    return {"rows": history.for_lead(lead_id, with_system=bool(system)),
-            "can_undo": auth.is_admin(request.state.login)}
+    admin = auth.is_admin(request.state.login)
+    return {"rows": history.for_lead(lead_id, with_system=bool(system), with_money=admin),
+            "can_undo": admin}
 
 
 @app.get("/api/history")

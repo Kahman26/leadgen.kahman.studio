@@ -239,6 +239,40 @@ td .sub { color: var(--muted); font-size: 12px; }
   .nwho { color: hsl(var(--hue, 220) 60% 72%); }
 }
 
+/* Сделки. Блок видит только владелец базы, поэтому оформление сдержанное:
+   это рабочая таблица, а не витрина. */
+.deal {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.dhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.dhead .ndel { margin-left: auto; }
+.dtag {
+  font-size: 11px; padding: 1px 6px; border-radius: 5px;
+  background: var(--accent-soft); color: var(--accent);
+}
+/* Полоса «поступило из договора»: доля денег видна раньше, чем прочитаны цифры. */
+.dbar { height: 5px; border-radius: 3px; background: var(--bg); margin: 8px 0 6px; overflow: hidden; }
+.dbar i { display: block; height: 100%; background: var(--ok); }
+.dsum { font-size: 12px; }
+.dwarn { font-size: 12px; color: var(--warm); margin-top: 4px; }
+
+.dpays { margin: 8px 0 6px; }
+.dpay { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.dpdate { color: var(--muted); min-width: 78px; }
+.dpsum { font-weight: 600; }
+.dpay .ndel { margin-left: auto; }
+
+.dealform, .payform { margin: 8px 0; }
+.drow { display: flex; gap: 6px; margin-bottom: 6px; }
+.drow > * { flex: 1 1 0; min-width: 0; }
+.dcheck { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; }
+.dcheck input { flex: 0 0 auto; }
+.dpayadd { font-size: 12px; padding: 4px 10px; }
+
+/* Продажнику вместо блока — одна строка без сумм. */
+.dclosed { color: var(--ok); font-size: 13px; }
+
 /* ── рабочая область: таблица слева, карточка справа ────────────────────── */
 /* Карточка стоит рядом с таблицей, а не поверх неё: ничего не перекрывается
    и строки списка не нужно затемнять. */
