@@ -221,6 +221,17 @@ CREATE TABLE IF NOT EXISTS lead_notes (
 );
 
 
+-- Настройки расчётов: ставки вознаграждения, доли конвертов, пороги найма.
+-- В базе, а не в коде: договор с продажником прямо предусматривает пересмотр
+-- ставок, и менять их должен владелец через интерфейс, а не правка исходников
+-- с деплоем. Значения лежат строками JSON — так в одной таблице уживаются
+-- и числа, и словари долей.
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+
 -- Отметки о разовых переделках базы. Нужна, чтобы перенос данных не повторялся
 -- при каждом запуске: «в таблице пусто» плохой признак — человек мог всё
 -- удалить сам, и тогда перенос вернул бы убранное.
@@ -344,6 +355,7 @@ def init():
     c.executescript(INDEXES)
     c.commit()
     _migrate_notes(c)
+    _seed_settings(c)
 
 
 SERVER_DB = "/var/lib/leadgen/leads.db"
@@ -555,6 +567,74 @@ def last_note_authors() -> dict:
     return {r["lead_id"]: r["login"] for r in conn().execute(
         "SELECT lead_id, login, MAX(ts * 1000000 + id) FROM lead_notes "
         "WHERE deleted=0 GROUP BY lead_id")}
+
+
+# ── настройки расчётов ───────────────────────────────────────────────────────
+
+# Значения по умолчанию. Здесь они нужны дважды: чтобы заполнить пустую базу
+# и чтобы ответить, если ключа в базе почему-то нет — раздел метрик не должен
+# падать из-за одной недостающей строки.
+DEFAULT_SETTINGS = {
+    # Договор с продажником
+    "rate_new": 20,                # % вознаграждения по новым сделкам
+    "rate_repeat": 10,             # % по повторным
+    "first_share_min": 30,         # доля первой оплаты, ниже — сделка не в зачёт премии
+    "bonus_levels": [[6, 8000], [10, 20000]],   # [сделок за месяц, премия]
+
+    # Конверты: раскладка каждого поступления. Сумма должна быть 100.
+    "envelopes": {
+        "Продажи": 20, "Производство": 25, "Сопровождение": 10,
+        "Налоги": 7, "Операционка": 5, "Резерв": 10, "Владелец": 23,
+    },
+    # Во что обходится роль в месяц: по этому считается, хватает ли в конверте
+    # на три месяца её работы.
+    "role_costs": {"Производство": 60000, "Сопровождение": 40000},
+
+    # Пороги найма
+    "hiring": {
+        "presale_deals": 3,        # сделок в месяц
+        "presale_months": 2,       # столько месяцев подряд
+        "context_retainers": 3,    # активных абонентских сделок
+        "dev_projects": 5,         # проектов в месяц
+        "dev_months": 2,
+        "marketer_mrr": 150000,
+    },
+
+    # Налоговый режим
+    "npd_limit": 2400000,          # лимит дохода по НПД за календарный год
+    "npd_warn": 70,                # с какого % заполнения предупреждать
+}
+
+
+def _seed_settings(c):
+    """Досыпает недостающие настройки. Существующие не трогает —
+    иначе правка владельца откатывалась бы при каждом перезапуске."""
+    for key, value in DEFAULT_SETTINGS.items():
+        c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)",
+                  (key, json.dumps(value, ensure_ascii=False)))
+    c.commit()
+
+
+def settings() -> dict:
+    """Настройки поверх значений по умолчанию: недостающий ключ не должен
+    ронять весь раздел метрик."""
+    out = dict(DEFAULT_SETTINGS)
+    for r in conn().execute("SELECT key, value FROM settings"):
+        if r["key"] not in DEFAULT_SETTINGS:
+            continue
+        try:
+            out[r["key"]] = json.loads(r["value"])
+        except (ValueError, TypeError):
+            pass          # битое значение — остаётся умолчание
+    return out
+
+
+def save_setting(key: str, value) -> None:
+    c = conn()
+    c.execute("INSERT INTO settings (key, value) VALUES (?,?) "
+              "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              (key, json.dumps(value, ensure_ascii=False)))
+    c.commit()
 
 
 # ── попытки дозвона ──────────────────────────────────────────────────────────

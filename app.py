@@ -7,7 +7,7 @@ import json
 from datetime import date
 from urllib.parse import quote, urlsplit
 
-from fastapi import FastAPI, Body, HTTPException, Request, Response, UploadFile, File
+from fastapi import FastAPI, Body, HTTPException, Query, Request, Response, UploadFile, File
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,7 @@ import auth
 import config
 import db
 import history
+import metrics
 import utils
 import pipeline
 import refs
@@ -1170,6 +1171,58 @@ def activity_page(request: Request):
 
 
 # ── журнал изменений ─────────────────────────────────────────────────────────
+
+# ── конверсии и показатели ───────────────────────────────────────────────────
+
+@app.get("/metrics")
+def metrics_page(request: Request):
+    # Чужому логину раздела просто нет: по нему считают выручку и выплаты.
+    if not auth.is_admin(getattr(request.state, "login", "")):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(config.BASE_DIR / "static" / "metrics.html")
+
+
+@app.get("/api/metrics")
+def metrics_report(request: Request,
+                   day_from: str = Query("", alias="from"),
+                   day_to: str = Query("", alias="to")):
+    _admin_only(request)
+    # Период по умолчанию — текущий месяц: именно им меряются планы и выплаты.
+    preset = metrics.presets()["month"]
+    day_from = _iso_date(day_from or preset[0], "Начало периода")
+    day_to = _iso_date(day_to or preset[1], "Конец периода")
+    if day_from > day_to:
+        day_from, day_to = day_to, day_from
+    return metrics.report(day_from, day_to)
+
+
+@app.post("/api/settings")
+def save_settings(request: Request, payload: dict = Body(...)):
+    """Ставки, доли и пороги правит владелец: договор прямо предусматривает
+    их пересмотр, и это не повод править код и катить деплой."""
+    who = _admin_only(request)
+    changed = []
+    for key, value in (payload or {}).items():
+        if key not in db.DEFAULT_SETTINGS:
+            raise HTTPException(400, f"Неизвестная настройка: {key}")
+        # Доли конвертов обязаны давать ровно сто: иначе раскладка поступлений
+        # молча перестанет сходиться с выручкой.
+        if key == "envelopes":
+            if not isinstance(value, dict) or not value:
+                raise HTTPException(400, "Конверты — список долей")
+            total = sum(value.values())
+            if round(total) != 100:
+                raise HTTPException(400, f"Сумма долей конвертов должна быть 100, а не {total}")
+        old = db.settings().get(key)
+        if old == value:
+            continue
+        db.save_setting(key, value)
+        changed.append(key)
+        history.log(who, "settings",
+                    new=f"{key}: {json.dumps(old, ensure_ascii=False)} → "
+                        f"{json.dumps(value, ensure_ascii=False)}")
+    return {"ok": True, "changed": changed}
+
 
 @app.get("/api/lead/{lead_id}/history")
 def lead_history(request: Request, lead_id: int, system: int = 0):

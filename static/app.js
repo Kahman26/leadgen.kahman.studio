@@ -996,6 +996,7 @@ async function init() {
   $('who').textContent = CFG.login || '';
   // Отчёт по сотрудникам — только владельцу базы. Сервер всё равно
   // проверит права, но и показывать чужую кнопку незачем.
+  $('mnMetrics').hidden = !CFG.is_admin;
   $('mnActivity').hidden = !CFG.is_admin;
   $('mnHistory').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));

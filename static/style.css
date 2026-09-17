@@ -533,3 +533,69 @@ a.btn:hover { text-decoration: none; }
 .side .hrow { padding-right: 0; }
 .side .hundo, .side .hdone { position: static; display: inline-block; margin-top: 4px; }
 .histfoot { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+
+
+/* ── конверсии и показатели ─────────────────────────────────────────────── */
+
+.mblock {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.mblock h2 { margin: 0 0 12px; font-size: 16px; }
+.mblock h3 { margin: 14px 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.mnote { margin-top: 10px; font-size: 12px; }
+.mwarn {
+  margin: 10px 0; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  background: var(--accent-soft); border: 1px solid var(--warm); color: var(--warm);
+}
+b.warn, .warn { color: var(--warm); }
+.ok { color: var(--ok); }
+
+/* Плитки с числом и стрелкой к прошлому периоду. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.tt { font-size: 12px; color: var(--muted); }
+.tv { font-size: 19px; font-weight: 600; margin: 3px 0; }
+.tn { font-size: 11px; }
+.dl.up { color: var(--ok); }
+.dl.down { color: var(--hot); }
+.dl.flat { color: var(--muted); }
+
+.mtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mtable th, .mtable td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.mtable th { font-size: 11px; color: var(--muted); font-weight: 600; }
+.mtable td.num, .mtable th.num { text-align: right; }
+.mtable td.sum { font-weight: 600; }
+.mtable td.total { font-weight: 700; color: var(--ok); }
+.mtable tr.subrow td { border-bottom: 1px solid var(--line); font-size: 12px; padding-top: 0; }
+.mtable tfoot td { border-bottom: none; }
+
+/* Воронка нарисована инлайновым SVG: внешних библиотек на странице нет. */
+.funnel { width: 100%; height: auto; display: block; margin-bottom: 12px; }
+.funnel .flab { font-size: 12px; fill: var(--ink); }
+.funnel .fval { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.funnel .fconv { font-size: 11px; fill: var(--muted); }
+.funnel .fbar { fill: var(--accent); }
+.funnel .fbar.good { fill: var(--ok); }
+.funnel .fbar.bad { fill: var(--hot); }
+
+/* Светофор найма: цвет слева, чтобы состояние читалось до текста. */
+.hroles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.hrole { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+.hname { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.hname i { width: 9px; height: 9px; border-radius: 50%; background: var(--cold); flex: 0 0 auto; }
+.hrole.ok .hname i { background: var(--ok); }
+.hrole.warn .hname i { background: var(--warm); }
+.hrole.ok { border-color: var(--ok); }
+
+.npdbar { height: 10px; border-radius: 5px; background: var(--bg); overflow: hidden; border: 1px solid var(--line); }
+.npdbar i { display: block; height: 100%; background: var(--ok); }
+.npdbar i.warn { background: var(--warm); }
+
+.sgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.sfield { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.sfield span { flex: 1 1 auto; color: var(--muted); }
+.sfield input { flex: 0 0 110px; }
+
+.filters button.per.on { background: var(--accent); border-color: var(--accent); color: #fff; }

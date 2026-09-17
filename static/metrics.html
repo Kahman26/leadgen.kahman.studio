@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Конверсии и показатели — сборщик лидов</title>
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/favicon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/favicon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#0e0e10">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Конверсии и показатели</h1>
+  <span class="city">по этим цифрам ставятся планы и считаются выплаты</span>
+  <span class="spacer"></span>
+  <a class="btn" href="/activity">Рабочее время</a>
+  <a class="btn" href="/">← К лидам</a>
+</header>
+
+<div class="wrap">
+
+  <div class="filters">
+    <button class="per" data-per="week">Эта неделя</button>
+    <button class="per" data-per="month">Этот месяц</button>
+    <button class="per" data-per="prev_month">Прошлый месяц</button>
+    <button class="per" data-per="quarter">Квартал</button>
+    <input type="date" id="dFrom">
+    <input type="date" id="dTo">
+    <button id="apply">Показать</button>
+    <span class="muted" id="range"></span>
+  </div>
+
+  <div id="body"><div class="empty">Загружаем…</div></div>
+
+</div>
+
+<script src="/static/heartbeat.js"></script>
+<script src="/static/metrics.js"></script>
+</body>
+</html>
