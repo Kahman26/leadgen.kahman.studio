@@ -630,17 +630,20 @@ b.warn, .warn { color: var(--warm); }
 .filters button.per.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ── вкладки ниш ────────────────────────────────────────────────────────── */
-/* На узком экране вкладки не переносятся, а листаются вбок: две строки
-   вкладок читаются как два разных меню. */
+/* Ниш восемь и больше — на ноутбуке они в одну строку не влезают, а
+   спрятанная за краем вкладка всё равно что её нет. Поэтому переносим.
+   На телефоне две-три строки вкладок съели бы пол-экрана — там листаем вбок. */
 .tabs {
-  display: flex; gap: 4px; margin-bottom: 12px;
+  display: flex; flex-wrap: wrap; gap: 0 2px; margin-bottom: 12px;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto; scrollbar-width: thin;
+}
+@media (max-width: 760px) {
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 }
 .tabs .tab {
   flex: 0 0 auto; white-space: nowrap;
   background: none; border: none; border-bottom: 2px solid transparent;
-  border-radius: 0; padding: 7px 12px 6px; margin-bottom: -1px;
+  border-radius: 0; padding: 6px 10px 5px; margin-bottom: -1px;
   color: var(--muted); font-weight: 560;
 }
 .tabs .tab:hover { color: var(--ink); border-bottom-color: var(--line); }
