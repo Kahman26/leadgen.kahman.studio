@@ -21,8 +21,9 @@ import config
 SUGGEST_URL = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
 FIND_URL = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
 
-# ОКВЭД, которые считаем нашей нишей. Всё остальное — совпадение по названию
-# с посторонней компанией.
+# ОКВЭД ниши по умолчанию — бронирования. Для остальных ниш коды приходят
+# из niche_rules: совпадение по названию с компанией чужого профиля — это
+# посторонняя компания.
 NICHE_OKVED = ("55.", "68.20", "68.10", "96.04", "93.29", "79.")
 
 STATUS_TEXT = {
@@ -68,7 +69,7 @@ def _ts_to_date(value):
         return ""
 
 
-def _score_match(lead_name, lead_address, suggestion):
+def _score_match(lead_name, lead_address, suggestion, okved_prefixes=NICHE_OKVED):
     """Складывает независимые подтверждения.
 
     Возвращает (баллы, чем подтверждено, есть ли профильное подтверждение).
@@ -89,7 +90,7 @@ def _score_match(lead_name, lead_address, suggestion):
             why.append("название частично совпадает")
 
     okved = data.get("okved") or ""
-    if okved.startswith(NICHE_OKVED):
+    if okved_prefixes and okved.startswith(tuple(okved_prefixes)):
         points += 2
         strong = True
         why.append(f"ОКВЭД {okved} из ниши")
@@ -161,7 +162,7 @@ def by_inn(inn, token=None):
     return _pack(found[0], "high", ["найдено по ИНН"])
 
 
-def by_name(name, address="", token=None, kladr=None):
+def by_name(name, address="", token=None, kladr=None, okved=NICHE_OKVED):
     """Ищет компанию по торговому названию. Возвращает None, если неуверенно."""
     token = token or config.DADATA_TOKEN
     if not token or not (name or "").strip():
@@ -176,7 +177,7 @@ def by_name(name, address="", token=None, kladr=None):
     }
     best, best_points, best_why = None, 0, []
     for suggestion in _post(SUGGEST_URL, body, token):
-        points, why, strong = _score_match(name, address, suggestion)
+        points, why, strong = _score_match(name, address, suggestion, okved)
         # Без профильного подтверждения это просто однофамилец
         if not strong:
             continue

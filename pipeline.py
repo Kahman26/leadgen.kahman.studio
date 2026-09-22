@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import config
 import db
 import history
+import niche_rules
 import scoring
 import utils
 from enrich import dadata_lookup, site_audit, whois_check
@@ -91,7 +92,8 @@ def enrich_from_egrul(lead):
 
     try:
         found = (dadata_lookup.by_inn(trusted_inn) if trusted_inn
-                 else dadata_lookup.by_name(lead.get("name", ""), lead.get("address") or ""))
+                 else dadata_lookup.by_name(lead.get("name", ""), lead.get("address") or "",
+                                            okved=niche_rules.okved_for(lead.get("niche_id"))))
     except PermissionError:
         raise
     except Exception:
@@ -163,7 +165,8 @@ def process_lead(lead, do_whois=False, do_dadata=False):
 # ── полный прогон ────────────────────────────────────────────────────────────
 
 def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
-        dadata_discover=False):
+        dadata_discover=False, niche=niche_rules.DEFAULT):
+    """Сбор по одной нише: niche — код из niche_rules."""
     with _lock:
         if _state["running"]:
             return
@@ -175,12 +178,21 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
         _state["run_id"] = run_id
 
     try:
-        osm_leads = overpass.fetch(_log, use_cache) if use_osm else []
-        dadata_leads = dadata.fetch(_log) if dadata_discover else []
+        niche_id = niche_rules.niche_id_of(niche)
+        if not niche_id:
+            raise RuntimeError(f"Нет ниши с кодом {niche} — сбор некуда складывать")
+        _log(f"Ниша: {niche_rules.title_of(niche_id)}")
+
+        osm_leads = overpass.fetch(_log, use_cache, niche=niche) if use_osm else []
+        dadata_leads = dadata.fetch(_log, niche=niche) if dadata_discover else []
 
         leads, merged = merge_sources(osm_leads, dadata_leads)
         if merged:
             _log(f"Склейка: {merged} компаний из ЕГРЮЛ совпали с объектами на карте")
+        # Ниша нужна уже при проверке: от неё зависят ОКВЭД для сверки
+        # с ЕГРЮЛ и то, проверять ли на сайте бронирование
+        for lead in leads:
+            lead["niche_id"] = niche_id
 
         db.run_update(run_id, found=len(leads), stage="проверка сайтов")
         with _lock:

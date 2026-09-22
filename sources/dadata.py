@@ -7,7 +7,7 @@
 
 Важное ограничение: это API подсказок, а не выгрузка. Оно не умеет
 отдавать «всех подряд» и возвращает максимум 20 записей на запрос,
-поэтому перебираем список формулировок из config.DADATA_QUERIES.
+поэтому перебираем список формулировок ниши из niche_rules.
 """
 
 import time
@@ -15,12 +15,9 @@ import time
 import requests
 
 import config
+import niche_rules
 
 MAX_COUNT = 20
-
-
-def _is_niche(okved):
-    return bool(okved) and okved.startswith(config.NICHE_OKVED_PREFIXES)
 
 
 def _clean_phone(value):
@@ -32,8 +29,10 @@ def _clean_phone(value):
     return ""
 
 
-def fetch(progress=None, token=None):
+def fetch(progress=None, token=None, niche=niche_rules.DEFAULT):
     """Ищет компании ниши в городе. Возвращает список сырых лидов."""
+    rules = niche_rules.get(niche)
+    queries, okveds = rules["queries"], rules["okved"]
     token = token or config.DADATA_TOKEN
     if not token:
         if progress:
@@ -47,9 +46,9 @@ def fetch(progress=None, token=None):
     }
 
     leads, seen = [], set()
-    total = len(config.DADATA_QUERIES)
+    total = len(queries)
 
-    for i, query in enumerate(config.DADATA_QUERIES, 1):
+    for i, query in enumerate(queries, 1):
         if progress:
             progress(f"Dadata: «{query}» ({i}/{total}), найдено {len(leads)}")
         body = {
@@ -82,8 +81,8 @@ def fetch(progress=None, token=None):
             seen.add(inn)
 
             okved = d.get("okved") or ""
-            if not _is_niche(okved):
-                continue                    # отсекаем всё, что не про размещение
+            if not okved.startswith(okveds):
+                continue                    # отсекаем всё, что не про эту нишу
 
             mgmt = d.get("management") or {}
             address = ((d.get("address") or {}).get("value")) or ""

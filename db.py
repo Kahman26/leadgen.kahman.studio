@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS categories (
 );
 
 -- Прежние названия категорий после переименования и объединения. Сбор
--- продолжает присылать «Отель» из config.CATEGORY_MAP, даже если категорию
+-- продолжает присылать «Отель» из niche_rules.RULES, даже если категорию
 -- переименовали в «Отели», — по синониму он попадёт куда надо.
 CREATE TABLE IF NOT EXISTS category_aliases (
     niche_id    INTEGER NOT NULL,

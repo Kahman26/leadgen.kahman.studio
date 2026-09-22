@@ -20,6 +20,7 @@ import config
 import db
 import history
 import metrics
+import niche_rules
 import niches
 import utils
 import pipeline
@@ -167,6 +168,8 @@ def get_config(request: Request):
         "login": getattr(request.state, "login", ""),
         "is_admin": auth.is_admin(getattr(request.state, "login", "")),
         "editable": EDITABLE,
+        # Для каких ниш умеет работать сбор: окно запуска показывает только их
+        "collectable": niche_rules.collectable(),
         "field_labels": FIELD_LABELS,
 
     }
@@ -785,6 +788,9 @@ def create_lead(request: Request, payload: dict = Body(...)):
                     [processed.get(f) for f in fields])
     c.commit()
 
+    # Сайт проверялся до того, как стала известна ниша, а от неё зависят
+    # признаки и первая фраза: у автосервиса не ищут модуль бронирования
+    pipeline.rescore_one(cur.lastrowid)
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     history.log(request.state.login, "create", lead=row, new=row["name"])
     for what in created:
@@ -943,7 +949,7 @@ def edit_lead(request: Request, lead_id: int, payload: dict = Body(...)):
             touched.add(field)
 
     if not changes:
-        return current
+        return pipeline.rescore_one(lead_id) if niche_changed else current
 
     if "name" in changes and not changes["name"]:
         raise HTTPException(400, "Название не может быть пустым")
@@ -1073,8 +1079,15 @@ def recheck(lead_id: int):
 def start_run(request: Request, payload: dict = Body(default={})):
     if pipeline.state()["running"]:
         raise HTTPException(409, "Сбор уже идёт")
-    history.log(request.state.login, "run")
+    niche = payload.get("niche") or niche_rules.DEFAULT
+    if niche not in niche_rules.RULES:
+        raise HTTPException(400, "Для этой ниши правил сбора нет")
+    niche_id = niche_rules.niche_id_of(niche)
+    if not niche_id:
+        raise HTTPException(400, "Такой ниши нет в справочнике")
+    history.log(request.state.login, "run", new=niche_rules.title_of(niche_id))
     pipeline.run_async(
+        niche=niche,
         use_osm=payload.get("use_osm", True),
         use_dadata=payload.get("use_dadata", True),
         do_whois=payload.get("do_whois", False),

@@ -1430,13 +1430,23 @@ async function init() {
     location.href = '/login';
   };
 
-  $('btnRun').onclick = () => $('runDialog').showModal();
+  $('btnRun').onclick = () => {
+    // Только ниши с правилами сбора; по умолчанию — открытая вкладка
+    const sel = $('runNiche');
+    sel.innerHTML = NICHES.niches
+      .filter((n) => (CFG.collectable || []).includes(n.code))
+      .map((n) => `<option value="${esc(n.code)}">${esc(n.title)}</option>`).join('');
+    const open = nicheById(currentNiche);
+    if (open && (CFG.collectable || []).includes(open.code)) sel.value = open.code;
+    $('runDialog').showModal();
+  };
   $('runCancel').onclick = () => $('runDialog').close();
   $('runGo').onclick = async () => {
     $('runDialog').close();
     await api('/api/run', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        niche: $('runNiche').value,
         use_osm: $('optOsm').checked, use_dadata: $('optDadata').checked,
         do_whois: $('optWhois').checked, use_cache: $('optCache').checked,
         dadata_discover: $('optDiscover').checked,

@@ -11,12 +11,16 @@
 """
 
 import json
+import re
 import time
+from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
 import config
+import niche_rules
 import utils
 
 ENDPOINTS = [
@@ -107,16 +111,8 @@ def _first(tags, keys):
     return ""
 
 
-def _category(tags):
-    for key in ("tourism", "leisure", "amenity"):
-        v = tags.get(key)
-        if v and v in config.CATEGORY_MAP:
-            return config.CATEGORY_MAP[v]
-    return "Прочее размещение"
-
-
-def _source_detail(tags):
-    for key in ("tourism", "leisure", "amenity"):
+def _source_detail(tags, keys):
+    for key in keys:
         if tags.get(key):
             return f"OpenStreetMap, тег {key}={tags[key]}"
     return "OpenStreetMap"
@@ -131,13 +127,20 @@ def _address(tags):
     return line or city
 
 
-def _parse(elements):
+def _parse(elements, niche):
     leads = []
+    keys = list(niche_rules.get(niche)["osm"])
     for el in elements:
         tags = el.get("tags") or {}
         name = (tags.get("name") or tags.get("operator") or "").strip()
         if not name:
             continue                       # безымянные точки для обзвона бесполезны
+
+        # Слишком общий тег (shop=beauty) без подсказки в названии —
+        # не наша ниша: парикмахерская к косметологии не относится
+        category, fits = niche_rules.category_for(niche, tags, name)
+        if not fits:
+            continue
 
         contact_source = {}
         phones = utils.split_phones(_first(tags, PHONE_TAGS))
@@ -153,13 +156,13 @@ def _parse(elements):
 
         leads.append({
             "name": name,
-            "category": _category(tags),
+            "category": category,
             "address": _address(tags),
             "lat": el.get("lat") or (el.get("center") or {}).get("lat"),
             "lon": el.get("lon") or (el.get("center") or {}).get("lon"),
             "source": "osm",
             "source_ref": f'{el["type"]}/{el["id"]}',
-            "source_detail": _source_detail(tags),
+            "source_detail": _source_detail(tags, keys),
             "website": utils.decode_idna(_first(tags, SITE_TAGS)),
             "phone": phone,
             "phones": phones,
@@ -172,17 +175,22 @@ def _parse(elements):
     return leads
 
 
-def fetch(progress=None, use_cache=True):
-    """Забирает объекты ниши по bbox города. Возвращает список сырых лидов."""
+def fetch(progress=None, use_cache=True, niche=niche_rules.DEFAULT):
+    """Забирает объекты ниши по bbox города. Возвращает список сырых лидов.
+
+    niche — код ниши из niche_rules: по нему выбираются теги и категории.
+    """
     seen, leads = set(), []
-    keys = list(config.OSM_FILTERS.items())
+    keys = list(niche_rules.get(niche)["osm"].items())
 
     for i, (key, values) in enumerate(keys):
         if progress:
             progress(f"OpenStreetMap: ищу {key} ({len(values)} типов)")
-        data = _request(key, _build_query(key, values), progress, use_cache)
+        # Кеш у каждой ниши свой: у автосервисов и отелей ключ amenity один,
+        # а значения разные
+        data = _request(f"{niche}_{key}", _build_query(key, list(values)), progress, use_cache)
 
-        for lead in _parse(data.get("elements", [])):
+        for lead in _parse(data.get("elements", []), niche):
             if lead["source_ref"] in seen:
                 continue                   # один объект может попасть под два тега
             seen.add(lead["source_ref"])
@@ -191,6 +199,46 @@ def fetch(progress=None, use_cache=True):
         if i < len(keys) - 1:
             time.sleep(PAUSE_BETWEEN)      # не занимаем все слоты публичного сервера
 
+    if not niche_rules.get(niche).get("chains"):
+        leads, dropped = _drop_chains(leads)
+        if dropped and progress:
+            progress(f"OpenStreetMap: пропускаю сети — {dropped}")
+
     if progress:
         progress(f"OpenStreetMap: {len(leads)} объектов с названием")
     return leads
+
+
+def _drop_chains(leads):
+    """Убирает сети: три и больше точек с одним названием и общим сайтом.
+
+    Отметка бренда (brand:wikidata) в OSM Екатеринбурга стоит редко, поэтому
+    сеть узнаём по повторам. Одного названия мало: «Шиномонтаж» и «Цветы» —
+    это разные маленькие точки без своего имени, их как раз берём. У сети
+    же на всех точках один сайт. Возвращает (оставшиеся, «Инвитро 38, …»).
+    """
+    def norm(name):
+        return re.sub(r"[^a-zа-я0-9]+", " ", name.lower().replace("ё", "е")).strip()
+
+    def host(url):
+        if not url:
+            return ""
+        h = urlsplit(url if "//" in url else "http://" + url).hostname or ""
+        return h[4:] if h.startswith("www.") else h
+
+    groups = {}
+    for lead in leads:
+        groups.setdefault(norm(lead["name"]), []).append(lead)
+
+    chains = {}
+    for key, group in groups.items():
+        if len(group) < 3:
+            continue
+        hosts = Counter(host(l["website"]) for l in group if l["website"])
+        if hosts and hosts.most_common(1)[0][1] >= 2:
+            chains[key] = (group[0]["name"], len(group))
+
+    kept = [l for l in leads if norm(l["name"]) not in chains]
+    top = sorted(chains.values(), key=lambda x: -x[1])
+    text = ", ".join(f"{name} {n}" for name, n in top[:8]) + (" …" if len(top) > 8 else "")
+    return kept, text

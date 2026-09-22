@@ -8,6 +8,7 @@
 from datetime import datetime
 
 import config
+import niche_rules
 from enrich.site_audit import CHEAP_BUILDERS
 
 SLOW_MS = 3000
@@ -35,12 +36,58 @@ REASONS = {
 HOT = 60
 
 
+def _pitch_general(code, lead, audit):
+    """Первая фраза для ниш без бронирования: автосервисы, клиники, ремонт.
+
+    Тексты про «гостя», агрегаторы жилья и форму брони там звучат нелепо,
+    поэтому здесь те же проблемы сайта, но про клиента, который ищет услугу.
+    Точные тексты под каждую нишу — следующий шаг; эти годятся для всех.
+    """
+    name = lead.get("name") or "вас"
+    site = audit.get("final_url") or lead.get("website") or ""
+    cms = audit.get("cms") or "конструкторе"
+    year = audit.get("copyright_year")
+
+    if code == "NO_SITE":
+        return (f"У «{name}» нет своего сайта — клиент, который ищет услугу в Яндексе, "
+                f"видит только карточку на картах и уходит к тем, у кого можно сразу "
+                f"посмотреть цены, работы и записаться.")
+    if code == "SITE_PARKED":
+        why = audit.get("parked_reason") or "там парковка"
+        return (f"Домен {site} у «{name}» отвечает, но сайта компании на нём уже нет — "
+                f"{why}. Клиент из поиска попадает на чужую страницу, а адрес при этом "
+                f"до сих пор указан в карточках на картах.")
+    if code == "SITE_DEAD":
+        return (f"Сайт {site} сейчас не открывается — клиент, который ищет вас в Яндексе, "
+                f"попадает в пустоту и уходит к конкурентам. Показать, что именно сломалось?")
+    if code == "NO_MOBILE":
+        return (f"Сайт не адаптирован под телефон — а услуги ищут с мобильного примерно "
+                f"в 7 случаях из 10. Клиент видит мелкий текст, не может нажать «позвонить» "
+                f"или «записаться» и закрывает вкладку.")
+    if code == "CHEAP_BUILDER":
+        return (f"Сайт собран на {cms} — клиент считывает это за секунду, и это бьёт "
+                f"по доверию ровно в момент, когда он выбирает между вами и конкурентом.")
+    if code == "OUTDATED":
+        y = f" (копирайт {year} года)" if year else ""
+        return (f"Сайт выглядит заброшенным{y} — клиент думает, что компания уже "
+                f"не работает, и даже не звонит, чтобы уточнить.")
+    if code == "NO_HTTPS":
+        return (f"Сайт без HTTPS — браузер пишет «Не защищено» прямо перед формой заявки. "
+                f"Это прямая потеря обращений.")
+    return None
+
+
 def _pitch(code, lead, audit):
     """С чего начать разговор. Проблема клиента, а не наш оффер."""
     name = lead.get("name") or "вас"
     site = audit.get("final_url") or lead.get("website") or ""
     cms = audit.get("cms") or "конструкторе"
     year = audit.get("copyright_year")
+
+    if code != "LIQUIDATED" and not niche_rules.checks_booking(lead.get("niche_id")):
+        general = _pitch_general(code, lead, audit)
+        if general:
+            return general
 
     if code == "LIQUIDATED":
         return (f"По ЕГРЮЛ организация ликвидирована — звонить некуда. "
@@ -145,8 +192,12 @@ def score_lead(lead, audit):
 
         # Три состояния вместо «есть/нет»: настоящая система бронирования,
         # заявка с обратным звонком и полное отсутствие того и другого.
+        # Только для ниш, где бронь — суть бизнеса: автосервису признак
+        # «нет модуля бронирования» ничего не говорит.
         booking = audit.get("booking_type") or "none"
-        if booking == "none":
+        if not niche_rules.checks_booking(lead.get("niche_id")):
+            pass
+        elif booking == "none":
             problems.append("NO_BOOKING")
             missing.append("Гость не может ни забронировать, ни оставить заявку — "
                            "только звонить")

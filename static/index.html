@@ -134,13 +134,16 @@
 
 <dialog id="runDialog">
   <h3 style="margin-top:0">Что собираем</h3>
+  <label class="fld"><span>Ниша</span>
+    <select id="runNiche"></select></label>
   <label class="row"><input type="checkbox" id="optOsm" checked> OpenStreetMap — объекты на карте города</label>
   <label class="row"><input type="checkbox" id="optDadata" checked> Сверять с ЕГРЮЛ — статус, ИНН, директор <span class="muted" id="dadataHint"></span></label>
   <label class="row"><input type="checkbox" id="optDiscover"> Искать новые компании в ЕГРЮЛ <span class="muted">(медленно, много лишнего)</span></label>
   <label class="row"><input type="checkbox" id="optWhois"> Проверять домены через whois <span class="muted">(медленно)</span></label>
   <label class="row"><input type="checkbox" id="optCache" checked> Использовать кеш карты (сутки)</label>
   <div class="muted" style="font-size:12px">
-    Сбор пока настроен только под нишу «Бронирование и размещение» — новые объекты попадут туда.
+    OpenStreetMap в городе размечен неполно — остальное удобно добирать кнопкой для карт.
+    Ниши, заведённые вручную, собирать нечем: правил сбора для них нет.
   </div>
   <div style="display:flex;gap:8px;align-items:center;margin-top:16px">
     <button id="runRescore" title="Применить новые веса из scoring.py к уже собранным лидам">
