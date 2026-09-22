@@ -4,6 +4,7 @@
 import csv
 import io
 import json
+import re
 from datetime import date
 from urllib.parse import quote, urlsplit
 
@@ -675,9 +676,16 @@ def remove_payment(request: Request, payment_id: int):
     return {"ok": True}
 
 
-def _find_duplicate(name, website):
-    """Ищет уже заведённый объект — по домену или по названию."""
+def _find_duplicate(name, website, phones=(), map_url=""):
+    """Ищет уже заведённый объект — по карточке на картах, домену, телефону
+    или названию. Телефон и карточка важны для объектов с карт: там название
+    часто записано иначе, чем в OSM («Форд 96» и «Ford-96»)."""
     c = db.conn()
+
+    if map_url:
+        row = c.execute("SELECT id, name FROM leads WHERE map_url = ?", (map_url,)).fetchone()
+        if row:
+            return row
 
     host = ""
     if website:
@@ -689,6 +697,14 @@ def _find_duplicate(name, website):
             "SELECT id, name FROM leads WHERE website LIKE ? OR final_url LIKE ?",
             (f"%{host}%", f"%{host}%"),
         ).fetchone()
+        if row:
+            return row
+
+    # Телефоны хранятся одним видом (+7XXXXXXXXXX), поэтому LIKE по строке
+    # JSON-списка находит номер, даже если у объекта он не основной
+    for phone in phones:
+        row = c.execute("SELECT id, name FROM leads WHERE phone = ? OR phones LIKE ?",
+                        (phone, f'%"{phone}"%')).fetchone()
         if row:
             return row
 
@@ -711,11 +727,13 @@ def create_lead(request: Request, payload: dict = Body(...)):
     if website and not utils.looks_like_url(website):
         raise HTTPException(400, "Не похоже на адрес сайта")
 
-    dup = _find_duplicate(name, website)
+    phones = utils.split_phones(payload.get("phone") or "")
+    map_url, map_source = _map_card(payload.get("map_url"))
+
+    dup = _find_duplicate(name, website, phones, map_url)
     if dup:
         raise HTTPException(409, f"Такой объект уже есть: «{dup['name']}»")
 
-    phones = utils.split_phones(payload.get("phone") or "")
     host = (urlsplit(website if "//" in website else "http://" + website).hostname
             if website else "") or ""
 
@@ -725,7 +743,8 @@ def create_lead(request: Request, payload: dict = Body(...)):
         "lat": None, "lon": None,
         "source": "manual",
         "source_ref": (host or pipeline.norm_name(name))[:120],
-        "source_detail": "Добавлен вручную",
+        "source_detail": f"{map_source}, добавлен вручную" if map_source else "Добавлен вручную",
+        "map_url": map_url,
         "website": website,
         # Адрес вписан руками — сбор не должен его переписывать
         "website_manual": 1 if website else 0,
@@ -734,10 +753,11 @@ def create_lead(request: Request, payload: dict = Body(...)):
         "telegram": (payload.get("telegram") or "").strip().lstrip("@"),
         "vk": (payload.get("vk") or "").strip(),
         "email": (payload.get("email") or "").strip(),
-        "whatsapp": "",
-        "contact_source": {k: "вручную" for k, v in (
+        "whatsapp": (utils.split_phones(payload.get("whatsapp") or "") or [""])[0],
+        "contact_source": {k: (map_source or "вручную") for k, v in (
             ("phone", phones), ("telegram", payload.get("telegram")),
-            ("vk", payload.get("vk")), ("email", payload.get("email"))) if v},
+            ("vk", payload.get("vk")), ("whatsapp", payload.get("whatsapp")),
+            ("email", payload.get("email"))) if v},
     }
 
     processed = pipeline.process_lead(lead, do_dadata=bool(config.DADATA_TOKEN))
@@ -756,7 +776,7 @@ def create_lead(request: Request, payload: dict = Body(...)):
     processed.update({"niche_id": niche_id, "category_id": category_id,
                       "category": cat_row["title"] if cat_row else ""})
 
-    fields = [f for f in db.UPSERT_FIELDS + ["niche_id", "source", "source_ref",
+    fields = [f for f in db.UPSERT_FIELDS + ["niche_id", "map_url", "source", "source_ref",
                                              "website_manual", "created_at", "updated_at"]
               if f in processed or f in ("created_at", "updated_at")]
     processed["created_at"] = processed["updated_at"] = db.now()
@@ -827,6 +847,27 @@ FIELD_LABELS = dict(EDITABLE, **{
     "ai_model": "Чем проверено",
     "ai_error": "Ошибка автопроверки",
 })
+
+
+# Откуда можно принести карточку кнопкой «В leadgen»: только сами карты,
+# чтобы в поле ссылки не оказалось что попало.
+MAP_HOSTS = {"yandex": "Яндекс Карты", "2gis": "2ГИС"}
+
+
+def _map_card(url):
+    """Ссылка на карточку организации → (чистая ссылка, название сервиса)."""
+    url = (url or "").strip()
+    if not url:
+        return "", ""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    for key, title in MAP_HOSTS.items():
+        # yandex.ru, yandex.com, 2gis.ru, 2gis.kz. Не «yandex.чужой-сайт.com»
+        if parts.scheme == "https" and re.fullmatch(rf"(www\.)?{key}\.[a-z]{{2,4}}", host):
+            # Хвост с координатами и масштабом у одной и той же карточки
+            # разный — без него ссылка годится для поиска дублей
+            return f"https://{host}{parts.path}"[:300], title
+    return "", ""
 
 
 NICHE_KEYS = ("niche_id", "niche_new", "category_id", "category_new")
@@ -1069,7 +1110,7 @@ EXPORT_COLUMNS = [
     ("org_status_text", "Статус организации"), ("director", "Руководитель"),
     ("inn", "ИНН"), ("legal_address", "Юр. адрес"),
     ("dadata_confidence", "Точность совпадения"),
-    ("status", "Статус"), ("note", "Заметка"),
+    ("status", "Статус"), ("note", "Заметка"), ("map_url", "Карточка на картах"),
 ]
 
 
@@ -1273,6 +1314,12 @@ def category_delete(request: Request, category_id: int):
     title = _niche_call(niches.delete_category, category_id)
     history.log(who, "niches", old=title, new=f"Удалил категорию «{title}»")
     return niches.listing()
+
+
+@app.get("/bookmarklet")
+def bookmarklet_page():
+    """Кнопка «В leadgen» для закладок: объект с Яндекс Карт и 2ГИС в форму."""
+    return FileResponse(config.BASE_DIR / "static" / "bookmarklet.html")
 
 
 @app.get("/niches")

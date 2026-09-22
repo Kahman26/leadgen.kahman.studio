@@ -378,6 +378,7 @@ MIGRATIONS = [
     ("last_call_at", "TEXT DEFAULT ''"),
     ("niche_id", "INTEGER"),
     ("category_id", "INTEGER"),
+    ("map_url", "TEXT DEFAULT ''"),
 ]
 
 

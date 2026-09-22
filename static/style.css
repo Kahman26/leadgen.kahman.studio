@@ -687,3 +687,18 @@ dialog .fld select, .side .fld select { width: 100%; }
 .ncount { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .nadd { display: flex; gap: 6px; margin-top: 10px; }
 .nadd input { flex: 1; min-width: 0; }
+
+/* ── кнопка для карт ────────────────────────────────────────────────────── */
+/* Плашка в форме объекта: форму заполнила кнопка с карт, а не человек */
+.fromcard {
+  margin-bottom: 12px; padding: 8px 11px; border-radius: 8px; font-size: 13px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.steps { margin: 0; padding-left: 20px; }
+.steps li { margin-bottom: 8px; }
+/* Выглядит как кнопка, но это ссылка: её тащат на панель закладок */
+a.bmlink {
+  display: inline-block; padding: 8px 16px; border-radius: 8px;
+  background: var(--accent); color: #fff; font-weight: 600; cursor: grab;
+}
+a.bmlink:hover { text-decoration: none; filter: brightness(1.07); }

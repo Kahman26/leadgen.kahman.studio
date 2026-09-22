@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Кнопка для карт — сборщик лидов</title>
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/favicon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/favicon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#0e0e10">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Кнопка для карт</h1>
+  <span class="city">объект из Яндекс Карт и 2ГИС в один клик</span>
+  <span class="spacer"></span>
+  <a class="btn" href="/">← К лидам</a>
+</header>
+
+<div class="wrap" style="max-width:760px">
+  <p style="margin-top:0">
+    Нашли организацию в Яндекс Картах или 2ГИС — нажмите кнопку в закладках.
+    Откроется leadgen с заполненной формой «+ Объект»: название, телефоны,
+    сайт, Telegram, ВКонтакте, WhatsApp, почта, адрес, рубрика и ссылка на
+    карточку. Проверьте поля и нажмите «Добавить» — дальше объект проходит
+    ту же проверку сайта и ЕГРЮЛ, что и остальные.
+  </p>
+
+  <div class="nblock">
+    <h2 style="margin:0 0 10px;font-size:16px">Как поставить</h2>
+    <ol class="steps">
+      <li>Включите панель закладок: <b>Ctrl+Shift+B</b> (на Mac — ⌘+Shift+B).</li>
+      <li>Перетащите эту кнопку мышкой на панель закладок:
+        <div style="margin:12px 0"><a class="bmlink" id="bm" href="#">→ В leadgen</a></div>
+        Нажимать на неё здесь не нужно — только перетащить.
+      </li>
+    </ol>
+  </div>
+
+  <div class="nblock">
+    <h2 style="margin:0 0 10px;font-size:16px">Как пользоваться</h2>
+    <ol class="steps">
+      <li>Откройте карточку организации — в списке поиска или на карте. Сбоку
+        от списка тоже подходит.</li>
+      <li>Нажмите «→ В leadgen» в закладках. Откроется новая вкладка с формой.</li>
+      <li>Проверьте нишу и категорию — кнопка подбирает их по рубрике с карт,
+        но не всегда угадывает — и нажмите «Добавить».</li>
+    </ol>
+    <p class="muted" style="margin:10px 0 0;font-size:13px">
+      Если такой объект уже есть — по ссылке на карточку, сайту, телефону или
+      названию, — leadgen скажет, какой именно, и второй раз его не заведёт.
+    </p>
+  </div>
+
+  <div class="nblock">
+    <h2 style="margin:0 0 10px;font-size:16px">Если перетащить не получается</h2>
+    <p style="margin:0 0 8px;font-size:13px">
+      Создайте закладку вручную: имя — «В leadgen», адрес — этот код целиком.
+    </p>
+    <textarea id="bmCode" readonly style="min-height:90px;font-family:monospace;font-size:11px"></textarea>
+    <button id="bmCopy" style="margin-top:8px">Скопировать код</button>
+  </div>
+
+  <p class="muted" style="font-size:12px">
+    Кнопка работает с одной открытой карточкой и только по вашему нажатию:
+    списки она не обходит и сама ничего не собирает. Это ускоренное ручное
+    копирование, а не выгрузка каталога — массовый сбор с карт запрещён их
+    условиями.
+  </p>
+</div>
+
+<script src="/static/heartbeat.js"></script>
+<script>
+'use strict';
+// Кнопка собирается из static/bookmarklet.js: там читаемый исходник
+// с комментариями, здесь — одна строка javascript: с адресом этого leadgen
+(async () => {
+  const src = await fetch('/static/bookmarklet.js', { cache: 'no-store' }).then((r) => r.text());
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  const href = 'javascript:' + encodeURIComponent(code + '(' + JSON.stringify(location.origin) + ')');
+  const bm = document.getElementById('bm');
+  bm.href = href;
+  bm.onclick = (e) => {
+    e.preventDefault();
+    alert('Эту кнопку нужно перетащить на панель закладок, а не нажимать здесь.');
+  };
+  document.getElementById('bmCode').value = href;
+  document.getElementById('bmCopy').onclick = async () => {
+    const box = document.getElementById('bmCode');
+    try { await navigator.clipboard.writeText(box.value); } catch (e) { box.select(); }
+    document.getElementById('bmCopy').textContent = 'Скопировано';
+  };
+})();
+</script>
+</body>
+</html>

@@ -36,6 +36,7 @@
     <button id="menuClose" aria-label="Закрыть">✕</button>
   </div>
   <a class="menuitem" href="/refs">Референсы</a>
+  <a class="menuitem" href="/bookmarklet">Кнопка для карт</a>
   <a class="menuitem" id="mnNiches" href="/niches" hidden>Ниши и категории</a>
   <a class="menuitem" id="mnMetrics" href="/metrics" hidden>Конверсии и показатели</a>
   <a class="menuitem" id="mnActivity" href="/activity" hidden>Рабочее время</a>
@@ -153,6 +154,8 @@
 
 <dialog id="addDialog">
   <h3 style="margin-top:0">Новый объект</h3>
+  <!-- Показывается, когда форму заполнила кнопка «В leadgen» с карт -->
+  <div class="fromcard" id="addFrom" hidden></div>
   <div class="err" id="addErr"></div>
 
   <label class="fld"><span>Название *</span>
@@ -169,6 +172,13 @@
       <input type="text" id="addTg" placeholder="username" autocomplete="off"></label>
     <label class="fld"><span>ВКонтакте</span>
       <input type="text" id="addVk" placeholder="club123" autocomplete="off"></label>
+  </div>
+
+  <div class="fldrow">
+    <label class="fld"><span>WhatsApp</span>
+      <input type="text" id="addWa" placeholder="+7 900 000-00-00" autocomplete="off"></label>
+    <label class="fld"><span>Почта</span>
+      <input type="text" id="addEmail" placeholder="info@example.ru" autocomplete="off"></label>
   </div>
 
   <!-- Ниша и категория: списки рисует app.js из справочника -->

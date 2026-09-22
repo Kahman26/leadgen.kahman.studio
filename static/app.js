@@ -276,6 +276,27 @@ function wirePicker(p) {
   fillCats();
 }
 
+// Рубрика с карт («Автосервис, автотехцентр») → наша категория. Сравниваем
+// основы слов: «Автосервис, СТО» совпадёт с «Автосервис», «Баня / сауна» —
+// с «Сауна». Ищем во всех нишах, при равенстве выигрывает открытая вкладка.
+// Не угадали — категория остаётся пустой, человек выберет сам.
+function guessCategory(rubric) {
+  const text = String(rubric || '').toLowerCase().replace(/ё/g, 'е');
+  if (!text) return null;
+  const stems = (title) => title.toLowerCase().replace(/ё/g, 'е')
+    .split(/[^a-zа-я0-9]+/).filter((w) => w.length >= 4)
+    .map((w) => w.slice(0, Math.max(4, w.length - 2)));
+  let best = null;
+  for (const n of NICHES.niches) {
+    for (const c of n.categories) {
+      const score = stems(c.title).filter((st) => text.includes(st)).length
+        + (String(n.id) === String(currentNiche) ? 0.5 : 0);
+      if (score >= 1 && (!best || score > best.score)) best = { niche: n.id, cat: c.id, score };
+    }
+  }
+  return best;
+}
+
 // То, что уходит на сервер: номер выбранного или название нового
 function pickerPayload(p) {
   const out = {};
@@ -844,6 +865,8 @@ async function openLead(id) {
     <div class="section">
       <h3>Контакты</h3>
       ${contactChips(l)}
+      ${l.map_url ? `<a class="chip" style="margin-top:6px" target="_blank" rel="noopener"
+         href="${esc(l.map_url)}">${/2gis\./.test(l.map_url) ? '2ГИС' : 'Яндекс Карты'} ↗</a>` : ''}
       ${l.phones && l.phones.length > 1
         ? `<div class="muted" style="margin-top:6px">Ещё номера: ${l.phones.slice(1).map(esc).join(', ')}</div>` : ''}
       ${cs.length ? `<div class="muted" style="margin-top:6px">Откуда контакт:
@@ -1435,17 +1458,57 @@ async function init() {
 
   // ── добавление объекта руками ────────────────────────────────────────
   const addFields = ['addName', 'addSite', 'addPhone', 'addTg', 'addVk',
-                     'addAddr', 'addNote'];
+                     'addWa', 'addEmail', 'addAddr', 'addNote'];
+  let addMapUrl = '';        // ссылка на карточку, если форму заполнили с карт
 
-  $('btnAdd').onclick = () => {
+  // card — то, что прислала кнопка «В leadgen» с Яндекс Карт или 2ГИС
+  const openAdd = (card) => {
     addFields.forEach((id) => { $(id).value = ''; });
+    addMapUrl = '';
     // Объект по умолчанию ложится в ту нишу, что открыта сейчас
-    $('addPicker').innerHTML = pickerHTML('add', currentNiche || NICHES.default_id, '');
+    let niche = currentNiche || NICHES.default_id;
+    let cat = '';
+    $('addFrom').hidden = !card;
+
+    if (card) {
+      const where = card.source === '2gis' ? '2ГИС' : 'Яндекс Карт';
+      $('addName').value = card.name || '';
+      $('addSite').value = card.website || '';
+      $('addPhone').value = (card.phones || []).join(', ');
+      $('addTg').value = card.telegram || '';
+      $('addVk').value = card.vk || '';
+      $('addWa').value = card.whatsapp || '';
+      $('addEmail').value = card.email || '';
+      $('addAddr').value = card.address || '';
+      if (card.rubric) $('addNote').value = `Рубрика в ${where === '2ГИС' ? '2ГИС' : 'Яндекс Картах'}: ${card.rubric}`;
+      addMapUrl = card.map_url || '';
+      const guess = guessCategory(card.rubric);
+      if (guess) { niche = guess.niche; cat = guess.cat; }
+      $('addFrom').textContent = `Заполнено из ${where}. Проверьте поля и нишу, потом «Добавить».`;
+    }
+
+    $('addPicker').innerHTML = pickerHTML('add', niche, cat);
     wirePicker('add');
     $('addErr').classList.remove('on');
     $('addDialog').showModal();
     $('addName').focus();
   };
+  $('btnAdd').onclick = () => openAdd(null);
+
+  // Кнопка «В leadgen» открывает страницу с данными карточки после «#add=».
+  // Часть после «#» на сервер не уходит; сразу убираем её из адреса, чтобы
+  // обновление страницы не открывало форму второй раз.
+  const takeCard = () => {
+    if (!location.hash.startsWith('#add=')) return;
+    let card = null;
+    try {
+      card = JSON.parse(decodeURIComponent(location.hash.slice(5)));
+    } catch (e) { /* битая ссылка — просто не открываем форму */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    if (card && typeof card === 'object') openAdd(card);
+  };
+  takeCard();
+  window.addEventListener('hashchange', takeCard);
   $('addCancel').onclick = () => $('addDialog').close();
 
   $('addGo').onclick = async () => {
@@ -1474,6 +1537,8 @@ async function init() {
           name,
           website: $('addSite').value, phone: $('addPhone').value,
           telegram: $('addTg').value, vk: $('addVk').value,
+          whatsapp: $('addWa').value, email: $('addEmail').value,
+          map_url: addMapUrl,
           address: $('addAddr').value,
           note: $('addNote').value,
           ...picked,
