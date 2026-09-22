@@ -5,3 +5,5 @@ fastapi>=0.110
 uvicorn>=0.27
 python-multipart>=0.0.9
 python-whois>=0.9
+# Выгрузка резервной копии в Google Таблицу (сервисный аккаунт)
+google-auth>=2.20

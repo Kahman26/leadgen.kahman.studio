@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 import activity
 import auth
+import backup
 import config
 import db
 import history
@@ -28,6 +29,8 @@ from enrich import research_brief
 app = FastAPI(title="Сборщик лидов", docs_url=None, redoc_url=None)
 db.init()
 auth.cleanup_sessions()
+# Вечерняя резервная копия: снимок базы и выгрузка в Google Таблицу
+backup.start()
 
 # Сюда пускаем без входа: сама форма логина, её стили и ответ поисковикам.
 # Иконки и манифест тоже без входа: браузер тянет манифест без куки, а айфон
@@ -1338,6 +1341,23 @@ def _admin_only(request: Request):
     if not auth.is_admin(login):
         raise HTTPException(403, "Доступ только у владельца базы")
     return login
+
+
+@app.get("/api/backup")
+def backup_status(request: Request):
+    _admin_only(request)
+    return backup.status()
+
+
+@app.post("/api/backup")
+def backup_now(request: Request):
+    """Сделать копию сейчас, не дожидаясь вечера. Идёт в фоне: выгрузка
+    в таблицу занимает десятки секунд."""
+    who = _admin_only(request)
+    if backup.status()["running"]:
+        raise HTTPException(409, "Копия уже делается")
+    backup.run_async(who)
+    return {"ok": True}
 
 
 @app.post("/api/ping")

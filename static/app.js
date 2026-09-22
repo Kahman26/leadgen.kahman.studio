@@ -1299,6 +1299,7 @@ async function init() {
   $('mnActivity').hidden = !CFG.is_admin;
   $('mnHistory').hidden = !CFG.is_admin;
   $('mnNiches').hidden = !CFG.is_admin;
+  $('btnBackup').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
@@ -1376,6 +1377,30 @@ async function init() {
   });
 
   $('btnExport').onclick = () => { location.href = '/api/export.csv?' + params(); };
+
+  // Копия идёт в фоне десятки секунд — ждём и показываем итог
+  $('btnBackup').onclick = async () => {
+    const btn = $('btnBackup');
+    btn.disabled = true;
+    btn.textContent = 'Делаю копию…';
+    try {
+      await api('/api/backup', { method: 'POST' });
+      let s;
+      do {
+        await new Promise((r) => setTimeout(r, 2000));
+        s = await api('/api/backup');
+      } while (s.running);
+      const r = s.last || {};
+      alert([
+        r.file ? `Снимок базы: ${r.file}` : `Снимок базы не сделан: ${r.file_error}`,
+        'rows' in r ? `Google Таблица: выгружено строк ${r.rows}` : `Google Таблица: ${r.sheet_error}`,
+      ].join('\n'));
+    } catch (e) {
+      alert('Не получилось: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Резервная копия сейчас';
+  };
 
   $('btnLogout').onclick = async () => {
     await fetch('/logout', { method: 'POST' });
