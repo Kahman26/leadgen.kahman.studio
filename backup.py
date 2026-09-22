@@ -217,8 +217,11 @@ def _meta(key, value=None):
     c.commit()
 
 
-def run(login="@system"):
-    """Снимок и выгрузка. Ошибка одной части не отменяет другую."""
+def run(login="@system", scheduled=False):
+    """Снимок и выгрузка. Ошибка одной части не отменяет другую.
+
+    Расписание отмечает только плановый запуск: ручная копия днём не должна
+    отменять вечернюю — к вечеру в базе будет уже другое."""
     if not _lock.acquire(blocking=False):
         return status()
     _state["running"] = True
@@ -241,8 +244,11 @@ def run(login="@system"):
 
         ok = "file" in result and "rows" in result
         _meta("backup_last", json.dumps(result, ensure_ascii=False))
-        if ok:
-            _meta("backup_day", local_now().date().isoformat())
+        if scheduled:
+            if ok:
+                _meta("backup_day", local_now().date().isoformat())
+            else:
+                _meta("backup_failed_at", str(int(time.time())))
 
         import history
         history.log(login, "backup", new=_describe(result))
@@ -280,16 +286,9 @@ def _due():
     now = local_now()
     if now.hour < HOUR or _meta("backup_day") == now.date().isoformat():
         return False
-    # После ошибки не долбим Google каждые пять минут
-    last = _meta("backup_last")
-    if last:
-        try:
-            tried = datetime.strptime(json.loads(last)["at"], "%d.%m.%Y %H:%M")
-            if (now.replace(tzinfo=None) - tried).total_seconds() < RETRY_AFTER:
-                return False
-        except (ValueError, KeyError, TypeError):
-            pass
-    return True
+    # После ошибки планового запуска не долбим Google каждые пять минут
+    failed = _meta("backup_failed_at")
+    return not (failed.isdigit() and time.time() - int(failed) < RETRY_AFTER)
 
 
 def _loop():
@@ -297,7 +296,7 @@ def _loop():
         time.sleep(CHECK_EVERY)
         try:
             if _due():
-                run()
+                run(scheduled=True)
         except Exception:                             # noqa: BLE001 — поток не должен умереть
             pass
 
