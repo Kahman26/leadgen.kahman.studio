@@ -46,6 +46,7 @@ ACTIONS = {
     "import":   "Импорт CSV",
     "run":      "Запуск сбора",
     "revert":   "Отмена правки",
+    "niches":   "Ниши и категории",
 }
 
 # Отменить можно только то, что меняло одно поле и знает прежнее значение.
@@ -245,6 +246,11 @@ def revert(entry_id, login):
     if not e["lead_id"] or not e["field"] or e["action"] not in UNDOABLE:
         return None, "Это действие нельзя отменить: оно не меняло одно поле"
 
+    # Ниша и категория в журнале записаны названиями, а в лиде лежат номерами:
+    # возврат идёт через справочник, а не прямой записью в колонку.
+    if e["field"] in ("niche", "category"):
+        return _revert_niche(c, e, login)
+
     columns = _columns()
     if e["field"] not in columns or e["field"] in NEVER_WRITE:
         return None, f"Поле «{e['field']}» больше не редактируется"
@@ -262,3 +268,24 @@ def revert(entry_id, login):
 
     log(login, "revert", lead=lead, field=field, old=current, new=e["old_value"])
     return c.execute("SELECT * FROM leads WHERE id=?", (e["lead_id"],)).fetchone(), ""
+
+
+def _revert_niche(c, e, login):
+    import niches
+    lead = c.execute("SELECT * FROM leads WHERE id=?", (e["lead_id"],)).fetchone()
+    if not lead:
+        return None, "Объект удалён из базы"
+    before = niches.titles(c, lead)
+    error = niches.revert(c, lead, e["field"], e["old_value"])
+    if error:
+        return None, error
+    c.execute("UPDATE history SET reverted=1 WHERE id=?", (e["id"],))
+    c.commit()
+
+    after = c.execute("SELECT * FROM leads WHERE id=?", (e["lead_id"],)).fetchone()
+    now = niches.titles(c, after)
+    # Возврат ниши может заодно снять категорию из чужой ниши — пишем обе
+    for i, field in enumerate(("niche", "category")):
+        if before[i] != now[i]:
+            log(login, "revert", lead=lead, field=field, old=before[i], new=now[i])
+    return after, ""

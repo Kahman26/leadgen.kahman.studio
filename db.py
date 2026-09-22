@@ -259,6 +259,41 @@ CREATE TABLE IF NOT EXISTS history (
 );
 
 
+-- Ниши и категории. Подробности — в niches.py. key — название в нижнем
+-- регистре и без ё: lower() в SQLite кириллицу не понимает, а дубли
+-- «Баня» и «баня» нужно ловить на уровне базы.
+CREATE TABLE IF NOT EXISTS niches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code       TEXT UNIQUE,             -- для кода: booking, auto; у заведённых людьми NULL
+    title      TEXT NOT NULL,
+    key        TEXT NOT NULL UNIQUE,
+    sort       INTEGER DEFAULT 0,
+    created_at TEXT,
+    created_by TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    niche_id   INTEGER NOT NULL,
+    title      TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    sort       INTEGER DEFAULT 0,
+    created_at TEXT,
+    created_by TEXT DEFAULT '',
+    UNIQUE(niche_id, key)
+);
+
+-- Прежние названия категорий после переименования и объединения. Сбор
+-- продолжает присылать «Отель» из config.CATEGORY_MAP, даже если категорию
+-- переименовали в «Отели», — по синониму он попадёт куда надо.
+CREATE TABLE IF NOT EXISTS category_aliases (
+    niche_id    INTEGER NOT NULL,
+    key         TEXT NOT NULL,
+    category_id INTEGER NOT NULL,
+    PRIMARY KEY (niche_id, key)
+);
+
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT,
@@ -303,6 +338,9 @@ CREATE INDEX IF NOT EXISTS idx_deals_lead ON deals(lead_id);
 CREATE INDEX IF NOT EXISTS idx_deals_date ON deals(contract_at);
 CREATE INDEX IF NOT EXISTS idx_pay_deal   ON payments(deal_id);
 CREATE INDEX IF NOT EXISTS idx_pay_date   ON payments(paid_at);
+CREATE INDEX IF NOT EXISTS idx_leads_niche    ON leads(niche_id);
+CREATE INDEX IF NOT EXISTS idx_leads_category ON leads(category_id);
+CREATE INDEX IF NOT EXISTS idx_categories_niche ON categories(niche_id, sort);
 """
 
 # Колонки, добавленные после первого релиза. CREATE TABLE IF NOT EXISTS
@@ -338,6 +376,8 @@ MIGRATIONS = [
     ("parked_reason", "TEXT DEFAULT ''"),
     ("call_count", "INTEGER DEFAULT 0"),
     ("last_call_at", "TEXT DEFAULT ''"),
+    ("niche_id", "INTEGER"),
+    ("category_id", "INTEGER"),
 ]
 
 
@@ -356,6 +396,9 @@ def init():
     c.commit()
     _migrate_notes(c)
     _seed_settings(c)
+    # Импорт внутри функции: niches знает про db, на уровне модуля был бы круг
+    import niches
+    niches.migrate(c)
 
 
 SERVER_DB = "/var/lib/leadgen/leads.db"
@@ -392,7 +435,7 @@ def now():
 
 # Поля, которые заполняет сборщик и которые можно безопасно обновлять.
 UPSERT_FIELDS = [
-    "name", "category", "address", "lat", "lon", "source_detail",
+    "name", "category", "category_id", "address", "lat", "lon", "source_detail",
     "inn", "ogrn", "org_name", "org_status", "org_status_text",
     "director", "director_post", "okved", "legal_address", "registered_at",
     "liquidated_at", "employee_count", "dadata_confidence", "dadata_match",
@@ -421,6 +464,10 @@ def upsert(lead: dict) -> str:
         (lead.get("source"), lead.get("source_ref")),
     ).fetchone()
 
+    # Текстовую категорию сбора раскладываем по справочнику ниш
+    import niches
+    niches.apply(c, lead, row)
+
     if row:
         fields = [f for f in UPSERT_FIELDS if f in lead]
         # Всё, что человек исправил руками, сбор перезаписывать не должен:
@@ -428,6 +475,9 @@ def upsert(lead: dict) -> str:
         protected = set(manual_list(row["manual_fields"]))
         if row["website_manual"]:
             protected.add("website")
+        # Категория — это и название, и номер: защищаем обе колонки разом
+        if "category" in protected:
+            protected.add("category_id")
         if protected:
             fields = [f for f in fields if f not in protected]
         sets = ", ".join(f"{f}=?" for f in fields) + ", updated_at=?"
@@ -443,7 +493,8 @@ def upsert(lead: dict) -> str:
         return "updated"
 
     lead["created_at"] = lead["updated_at"]
-    fields = [f for f in UPSERT_FIELDS + ["source", "source_ref", "created_at", "updated_at"]
+    fields = [f for f in UPSERT_FIELDS + ["niche_id", "source", "source_ref",
+                                          "created_at", "updated_at"]
               if f in lead]
     ph = ", ".join("?" * len(fields))
     cur = c.execute(

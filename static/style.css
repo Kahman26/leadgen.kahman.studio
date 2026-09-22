@@ -628,3 +628,55 @@ b.warn, .warn { color: var(--warm); }
 .sfield input { flex: 0 0 110px; }
 
 .filters button.per.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── вкладки ниш ────────────────────────────────────────────────────────── */
+/* На узком экране вкладки не переносятся, а листаются вбок: две строки
+   вкладок читаются как два разных меню. */
+.tabs {
+  display: flex; gap: 4px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: thin;
+}
+.tabs .tab {
+  flex: 0 0 auto; white-space: nowrap;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 7px 12px 6px; margin-bottom: -1px;
+  color: var(--muted); font-weight: 560;
+}
+.tabs .tab:hover { color: var(--ink); border-bottom-color: var(--line); }
+.tabs .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs .tabn {
+  display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 2px;
+  border-radius: 999px; background: var(--bg); border: 1px solid var(--line);
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tabs .tab.on .tabn { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.tabs .tabadd { color: var(--muted); font-size: 16px; line-height: 1; padding: 6px 12px; }
+
+/* Ниша и категория в формах: списки во всю ширину, поле для нового
+   названия — прямо под своим списком */
+dialog .fld select, .side .fld select { width: 100%; }
+.fld .newname { margin-top: 6px; }
+.side .fldrow { gap: 10px; }
+
+/* ── справочник ниш ─────────────────────────────────────────────────────── */
+.nblock {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.nhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nhead h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.nhead .spacer { flex: 1; }
+.nacts { display: flex; gap: 4px; flex-wrap: wrap; }
+.nacts button { padding: 3px 9px; font-size: 12px; }
+.ncats { margin: 10px 0 0; padding: 0; list-style: none; }
+.ncats li {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 0; border-top: 1px solid var(--line);
+}
+.ncats .ctitle { flex: 1 1 160px; min-width: 0; }
+.ncount { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.nadd { display: flex; gap: 6px; margin-top: 10px; }
+.nadd input { flex: 1; min-width: 0; }

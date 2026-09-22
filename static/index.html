@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-  <title>Сборщик лидов — ниша бронирования</title>
+  <title>Сборщик лидов</title>
   <!-- Иконки Аркадия. favicon-16/32 нарисованы под реальный размер вкладки —
        браузерное уменьшение 512-го даёт тёмные ореолы вокруг буквы.
        apple-touch-icon айфон берёт при добавлении на главный экран и скругляет
@@ -36,6 +36,7 @@
     <button id="menuClose" aria-label="Закрыть">✕</button>
   </div>
   <a class="menuitem" href="/refs">Референсы</a>
+  <a class="menuitem" id="mnNiches" href="/niches" hidden>Ниши и категории</a>
   <a class="menuitem" id="mnMetrics" href="/metrics" hidden>Конверсии и показатели</a>
   <a class="menuitem" id="mnActivity" href="/activity" hidden>Рабочее время</a>
   <a class="menuitem" id="mnHistory" href="/history" hidden>Журнал изменений</a>
@@ -53,6 +54,10 @@
     <div class="bar"><i id="runBar"></i></div>
     <div class="log" id="runLog"></div>
   </div>
+
+  <!-- Вкладки ниш: в какой нише сейчас работаем. Выбор живёт в адресе
+       страницы (?niche=2), чтобы ссылкой можно было поделиться. -->
+  <nav class="tabs" id="nicheTabs" aria-label="Ниши"></nav>
 
   <div class="stats" id="stats" hidden></div>
 
@@ -132,6 +137,9 @@
   <label class="row"><input type="checkbox" id="optDiscover"> Искать новые компании в ЕГРЮЛ <span class="muted">(медленно, много лишнего)</span></label>
   <label class="row"><input type="checkbox" id="optWhois"> Проверять домены через whois <span class="muted">(медленно)</span></label>
   <label class="row"><input type="checkbox" id="optCache" checked> Использовать кеш карты (сутки)</label>
+  <div class="muted" style="font-size:12px">
+    Сбор пока настроен только под нишу «Бронирование» — новые объекты попадут туда.
+  </div>
   <div style="display:flex;gap:8px;align-items:center;margin-top:16px">
     <button id="runRescore" title="Применить новые веса из scoring.py к уже собранным лидам">
       Только пересчитать баллы
@@ -162,9 +170,8 @@
       <input type="text" id="addVk" placeholder="club123" autocomplete="off"></label>
   </div>
 
-  <label class="fld"><span>Категория</span>
-    <input type="text" id="addCat" list="catList" placeholder="Баня / сауна" autocomplete="off">
-    <datalist id="catList"></datalist></label>
+  <!-- Ниша и категория: списки рисует app.js из справочника -->
+  <div id="addPicker"></div>
 
   <label class="fld"><span>Адрес</span>
     <input type="text" id="addAddr" placeholder="Екатеринбург, улица Ленина 1" autocomplete="off"></label>

@@ -11,6 +11,8 @@ let pollTimer = null;
 let selectedId = null;   // какой лид открыт в правой панели
 let showAll = false;     // развёрнута ли дополнительная информация в карточке
 let histOpen = false;    // развёрнута ли история изменений
+let NICHES = { niches: [], total: 0, default_id: null };   // справочник ниш
+let currentNiche = '';   // открытая вкладка: номер ниши или '' — все ниши
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -32,7 +34,8 @@ function params(extra = {}) {
   const p = new URLSearchParams();
   if ($('q').value.trim()) p.set('q', $('q').value.trim());
   if ($('fReason').value) p.set('reason', $('fReason').value);
-  if ($('fCategory').value) p.set('category', $('fCategory').value);
+  if (currentNiche) p.set('niche', currentNiche);
+  if ($('fCategory').value) p.set('cat', $('fCategory').value);
   if ($('fStatus').value) p.set('status', $('fStatus').value);
   if ($('fHas').value) p.set('has', $('fHas').value);
   if ($('fHidden').value) p.set('hidden', $('fHidden').value);
@@ -45,7 +48,7 @@ function params(extra = {}) {
 /* ── статистика ───────────────────────────────────────────────────────── */
 
 async function loadStats() {
-  const s = await api('/api/stats');
+  const s = await api('/api/stats' + (currentNiche ? '?niche=' + currentNiche : ''));
 
   const cards = [
     { n: s.total, t: 'Всего в базе', f: null },
@@ -73,17 +76,174 @@ async function loadStats() {
                       $('fHidden').value = ''; }
     offset = 0; loadStats(); loadLeads();
   });
+}
 
-  // категории заполняем один раз, из реальных данных
+/* ── ниши и категории ─────────────────────────────────────────────────── */
+
+const nicheById = (id) => NICHES.niches.find((n) => String(n.id) === String(id));
+
+// Подпись типа объекта: во вкладке ниши ниша и так понятна, во «Всех» — нет
+function kindText(l) {
+  const cat = l.category || 'без категории';
+  if (currentNiche) return cat;
+  const n = nicheById(l.niche_id);
+  return n ? `${n.title} · ${cat}` : cat;
+}
+
+async function loadNiches() {
+  NICHES = await api('/api/niches');
+  // Нишу могли удалить или объединить, пока вкладка была открыта
+  if (currentNiche && !nicheById(currentNiche)) setNicheInUrl('');
+  renderTabs();
+  fillCategoryFilter();
+}
+
+function renderTabs() {
+  const tab = (id, title, n) => `
+    <button class="tab${String(id) === String(currentNiche) ? ' on' : ''}" data-niche="${id}">
+      ${esc(title)} <span class="tabn">${n}</span></button>`;
+  $('nicheTabs').innerHTML =
+    tab('', 'Все', NICHES.total) +
+    NICHES.niches.map((n) => tab(n.id, n.title, n.count)).join('') +
+    '<button class="tab tabadd" id="tabAdd" title="Новая ниша">+</button>';
+
+  $('nicheTabs').querySelectorAll('[data-niche]').forEach((b) => {
+    b.onclick = () => openNiche(b.dataset.niche);
+  });
+  $('tabAdd').onclick = async () => {
+    const title = (prompt('Название новой ниши') || '').trim();
+    if (!title) return;
+    try {
+      const r = await api('/api/niches', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      NICHES = r;
+      openNiche(r.id);
+    } catch (e) { alert('Не получилось: ' + e.message); }
+  };
+
+  // На телефоне вкладки листаются вбок — открытая не должна прятаться за краем
+  const on = $('nicheTabs').querySelector('.tab.on');
+  if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+  const n = nicheById(currentNiche);
+  $('cityLabel').textContent = CFG.city + ' · ' + (n ? n.title : 'все ниши');
+  document.title = n ? `${n.title} — сборщик лидов` : 'Сборщик лидов';
+}
+
+// Фильтр типов показывает категории только открытой ниши. Во «Всех» —
+// все, сгруппированные по нишам, иначе одноимённые не различить.
+function fillCategoryFilter() {
   const sel = $('fCategory');
-  if (sel.options.length <= 1) {
-    const list = $('catList');
-    for (const [cat, n] of Object.entries(s.by_category)) {
-      if (cat === '—') continue;
-      sel.add(new Option(`${cat} (${n})`, cat));
-      list.appendChild(new Option(cat));   // те же категории — в подсказки формы
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">Все типы</option>';
+  const add = (parent, n) => {
+    for (const c of n.categories) {
+      parent.appendChild(new Option(`${c.title} (${c.count})`, c.id));
+    }
+  };
+  const n = nicheById(currentNiche);
+  if (n) {
+    add(sel, n);
+    if (n.no_category) sel.add(new Option(`Без категории (${n.no_category})`, 'none'));
+  } else {
+    for (const x of NICHES.niches) {
+      if (!x.categories.length) continue;
+      const g = document.createElement('optgroup');
+      g.label = x.title;
+      add(g, x);
+      sel.appendChild(g);
     }
   }
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : '';
+}
+
+function setNicheInUrl(id, push) {
+  currentNiche = id ? String(id) : '';
+  const u = new URL(location.href);
+  if (currentNiche) u.searchParams.set('niche', currentNiche);
+  else u.searchParams.delete('niche');
+  u.searchParams.delete('lead');
+  history[push ? 'pushState' : 'replaceState'](null, '', u);
+  try {
+    localStorage.setItem('niche', currentNiche);
+  } catch (e) { /* приватный режим — просто не запомним */ }
+}
+
+function openNiche(id, push = true) {
+  if (String(id || '') !== currentNiche) setNicheInUrl(id, push);
+  $('fCategory').value = '';
+  offset = 0; statFilter = null;
+  renderTabs(); fillCategoryFilter();
+  loadStats(); loadLeads();
+}
+
+// Ниша и категория в форме: два списка из справочника. Последний пункт
+// каждого — «+ Новая…»: под списком появляется поле, и новая ниша или
+// категория создаётся на сервере вместе с объектом.
+const NEW = '__new';
+
+function pickerHTML(p, nicheId, catId) {
+  return `
+    <div class="fldrow">
+      <label class="fld"><span>Ниша</span>
+        <select id="${p}Niche">
+          ${NICHES.niches.map((n) => `<option value="${n.id}"${
+            String(n.id) === String(nicheId) ? ' selected' : ''}>${esc(n.title)}</option>`).join('')}
+          <option value="${NEW}">+ Новая ниша…</option>
+        </select>
+        <input type="text" id="${p}NicheNew" class="newname" placeholder="Название ниши"
+               autocomplete="off" hidden></label>
+      <label class="fld"><span>Категория</span>
+        <select id="${p}Cat" data-want="${esc(catId || '')}"></select>
+        <input type="text" id="${p}CatNew" class="newname" placeholder="Название категории"
+               autocomplete="off" hidden></label>
+    </div>`;
+}
+
+function wirePicker(p) {
+  const showNew = (what) => {
+    const on = $(p + what).value === NEW;
+    $(p + what + 'New').hidden = !on;
+    if (on) $(p + what + 'New').focus();
+  };
+  const fillCats = () => {
+    const sel = $(p + 'Cat');
+    const want = sel.dataset.want || sel.value;
+    const n = nicheById($(p + 'Niche').value);
+    sel.innerHTML = '<option value="">Без категории</option>' +
+      (n ? n.categories.map((c) => `<option value="${c.id}">${esc(c.title)}</option>`).join('') : '') +
+      `<option value="${NEW}">+ Новая категория…</option>`;
+    sel.value = [...sel.options].some((o) => o.value === String(want)) ? String(want) : '';
+    sel.dataset.want = '';
+    showNew('Cat');
+  };
+  $(p + 'Niche').onchange = () => { showNew('Niche'); fillCats(); };
+  $(p + 'Cat').onchange = () => showNew('Cat');
+  fillCats();
+}
+
+// То, что уходит на сервер: номер выбранного или название нового
+function pickerPayload(p) {
+  const out = {};
+  const niche = $(p + 'Niche').value;
+  const cat = $(p + 'Cat').value;
+  if (niche === NEW) {
+    const t = $(p + 'NicheNew').value.trim();
+    if (!t) throw new Error('Впишите название новой ниши');
+    out.niche_new = t;
+  } else {
+    out.niche_id = Number(niche);
+  }
+  if (cat === NEW) {
+    const t = $(p + 'CatNew').value.trim();
+    if (!t) throw new Error('Впишите название новой категории');
+    out.category_new = t;
+  } else {
+    out.category_id = cat ? Number(cat) : null;
+  }
+  return out;
 }
 
 /* ── список лидов ─────────────────────────────────────────────────────── */
@@ -117,7 +277,7 @@ async function loadLeads() {
     <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden ' : ''}${String(l.id) === String(selectedId) ? 'selected' : ''}">
       <td>
         <div class="name">${esc(l.name)}</div>
-        <div class="sub">${esc(l.category || '')}</div>
+        <div class="sub">${esc(kindText(l))}</div>
       </td>
       <td><span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span></td>
       <td class="num">${l.priority
@@ -135,6 +295,11 @@ async function loadLeads() {
     </tr>`).join('');
 
   $('empty').hidden = data.items.length > 0;
+  // Сбор умеет только нишу по умолчанию — в остальные объекты добавляют руками
+  const n = nicheById(currentNiche);
+  $('empty').textContent = n && n.id !== NICHES.default_id && !n.count
+    ? `В нише «${n.title}» пока пусто. Добавьте объект кнопкой «+ Объект» или загрузите CSV.`
+    : 'Пока пусто. Нажмите «Запустить сбор».';
   $('count').textContent = `${total} лидов`;
   $('page').textContent = total ? `${offset + 1}–${Math.min(offset + PAGE, total)} из ${total}` : '';
   $('prev').disabled = offset === 0;
@@ -592,7 +757,8 @@ async function openLead(id) {
       <h2>${esc(l.name)}</h2>
       <button class="close" onclick="closeLead()" title="Закрыть">✕</button>
     </div>
-    <div class="cardmeta">${esc(l.category || '')} · балл
+    <div class="cardmeta">${esc((nicheById(l.niche_id) || {}).title || '')} ·
+      ${esc(l.category || 'без категории')} · балл
       <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
       <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>
     </div>
@@ -894,7 +1060,7 @@ async function openLead(id) {
 
 // Порядок полей в форме правки: сначала про объект, потом контакты, потом реестр
 const EDIT_GROUPS = [
-  ['Объект', ['name', 'category', 'address']],
+  ['Объект', ['name', 'address']],
   ['Контакты', ['phone', 'telegram', 'vk', 'whatsapp', 'email']],
   ['Реквизиты по ЕГРЮЛ', ['org_name', 'inn', 'ogrn', 'director', 'director_post',
                           'okved', 'legal_address']],
@@ -978,8 +1144,9 @@ function openEditor(l) {
     </div>
     <div class="cardmeta">Правка карточки</div>
     <div class="err" id="editErr"></div>
-    ${EDIT_GROUPS.map(([title, keys]) => `
-      <div class="section"><h3>${title}</h3>${keys.map(field).join('')}</div>`).join('')}
+    ${EDIT_GROUPS.map(([title, keys], i) => `
+      <div class="section"><h3>${title}</h3>${keys.map(field).join('')}${
+        i === 0 ? pickerHTML('edit', l.niche_id, l.category_id) : ''}</div>`).join('')}
     <div class="muted" style="font-size:12px;margin-top:12px">
       Исправленные поля сбор больше не перезаписывает. Пустое значение стирает данные.
     </div>
@@ -989,9 +1156,17 @@ function openEditor(l) {
     </div>`;
 
   $('editCancel').onclick = () => openLead(l.id);
+  wirePicker('edit');
 
   $('editSave').onclick = async () => {
-    const payload = {};
+    let payload;
+    try {
+      payload = pickerPayload('edit');
+    } catch (e) {
+      $('editErr').textContent = e.message;
+      $('editErr').classList.add('on');
+      return;
+    }
     $('drawer').querySelectorAll('[data-edit]').forEach((el) => {
       payload[el.dataset.edit] = el.value;
     });
@@ -1002,6 +1177,7 @@ function openEditor(l) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      await loadNiches();       // могли появиться новая ниша или категория
       await openLead(l.id);
       loadLeads(); loadStats();
     } catch (e) {
@@ -1064,13 +1240,13 @@ async function init() {
   // Журналу нужны подписи полей и названия статусов, а живёт он
   // в отдельном файле и до модульной переменной не дотянется.
   window.CFG = CFG;
-  $('cityLabel').textContent = CFG.city + ' · ниша бронирования';
   $('who').textContent = CFG.login || '';
   // Отчёт по сотрудникам — только владельцу базы. Сервер всё равно
   // проверит права, но и показывать чужую кнопку незачем.
   $('mnMetrics').hidden = !CFG.is_admin;
   $('mnActivity').hidden = !CFG.is_admin;
   $('mnHistory').hidden = !CFG.is_admin;
+  $('mnNiches').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
@@ -1079,6 +1255,24 @@ async function init() {
 
   wireSplitter();
   $('drawer').innerHTML = PLACEHOLDER;
+
+  // Какую нишу открыть: из адреса, а если в нём нет — ту, где работали
+  // в прошлый раз. Адрес тут же приводим в соответствие.
+  let startNiche = new URLSearchParams(location.search).get('niche');
+  if (startNiche === null) {
+    try { startNiche = localStorage.getItem('niche') || ''; } catch (e) { startNiche = ''; }
+  }
+  currentNiche = startNiche || '';
+  await loadNiches();
+  if (currentNiche) {
+    const u = new URL(location.href);
+    u.searchParams.set('niche', currentNiche);
+    history.replaceState(null, '', u);
+  }
+  // Кнопки «назад» и «вперёд» браузера переключают вкладки ниш
+  window.addEventListener('popstate', () => {
+    openNiche(new URLSearchParams(location.search).get('niche') || '', false);
+  });
 
   await loadStats();
   await loadLeads();
@@ -1157,10 +1351,13 @@ async function init() {
 
   // ── добавление объекта руками ────────────────────────────────────────
   const addFields = ['addName', 'addSite', 'addPhone', 'addTg', 'addVk',
-                     'addCat', 'addAddr', 'addNote'];
+                     'addAddr', 'addNote'];
 
   $('btnAdd').onclick = () => {
     addFields.forEach((id) => { $(id).value = ''; });
+    // Объект по умолчанию ложится в ту нишу, что открыта сейчас
+    $('addPicker').innerHTML = pickerHTML('add', currentNiche || NICHES.default_id, '');
+    wirePicker('add');
     $('addErr').classList.remove('on');
     $('addDialog').showModal();
     $('addName').focus();
@@ -1171,6 +1368,14 @@ async function init() {
     const name = $('addName').value.trim();
     if (!name) {
       $('addErr').textContent = 'Без названия объект не добавить';
+      $('addErr').classList.add('on');
+      return;
+    }
+    let picked;
+    try {
+      picked = pickerPayload('add');
+    } catch (e) {
+      $('addErr').textContent = e.message;
       $('addErr').classList.add('on');
       return;
     }
@@ -1185,11 +1390,13 @@ async function init() {
           name,
           website: $('addSite').value, phone: $('addPhone').value,
           telegram: $('addTg').value, vk: $('addVk').value,
-          category: $('addCat').value, address: $('addAddr').value,
+          address: $('addAddr').value,
           note: $('addNote').value,
+          ...picked,
         }),
       });
       $('addDialog').close();
+      await loadNiches();
       await loadLeads();
       await loadStats();
       openLead(lead.id);                  // сразу показываем, что получилось
@@ -1209,9 +1416,11 @@ async function init() {
     $('btnImport').textContent = 'Загружаю…';
     try {
       const fd = new FormData(); fd.append('file', f);
-      const r = await api('/api/import', { method: 'POST', body: fd });
+      // Без колонки niche объекты лягут в открытую нишу
+      const r = await api('/api/import' + (currentNiche ? '?niche=' + currentNiche : ''),
+                          { method: 'POST', body: fd });
       alert(`Добавлено лидов: ${r.added}`);
-      loadStats(); loadLeads();
+      loadNiches(); loadStats(); loadLeads();
     } catch (e) { alert('Ошибка импорта: ' + e.message); }
     $('btnImport').disabled = false;
     $('btnImport').textContent = 'Импорт CSV';

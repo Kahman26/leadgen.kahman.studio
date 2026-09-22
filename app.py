@@ -18,13 +18,14 @@ import config
 import db
 import history
 import metrics
+import niches
 import utils
 import pipeline
 import refs
 import scoring
 from enrich import research_brief
 
-app = FastAPI(title="Сборщик лидов — ниша бронирования", docs_url=None, redoc_url=None)
+app = FastAPI(title="Сборщик лидов", docs_url=None, redoc_url=None)
 db.init()
 auth.cleanup_sessions()
 
@@ -169,8 +170,20 @@ def get_config(request: Request):
 
 # ── выборка лидов ────────────────────────────────────────────────────────────
 
-def _where(reason, status, category, q, has, source, hidden="", org=""):
+def _where(reason, status, category, q, has, source, hidden="", org="",
+           niche="", cat=""):
     sql, params = [], []
+
+    # Ниша и категория приходят номерами из вкладок и фильтра типов.
+    # cat=none — объекты ниши, которым тип ещё не выбрали.
+    if str(niche).isdigit():
+        sql.append("niche_id = ?")
+        params.append(int(niche))
+    if cat == "none":
+        sql.append("category_id IS NULL")
+    elif str(cat).isdigit():
+        sql.append("category_id = ?")
+        params.append(int(cat))
 
     # По умолчанию скрытые не показываем: их убрали именно чтобы не мешали.
     if hidden == "only":
@@ -220,8 +233,10 @@ def _where(reason, status, category, q, has, source, hidden="", org=""):
 @app.get("/api/leads")
 def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "",
               has: str = "", source: str = "", hidden: str = "", org: str = "",
+              niche: str = "", cat: str = "",
               sort: str = "score", limit: int = 100, offset: int = 0):
-    where, params = _where(reason, status, category, q, has, source, hidden, org)
+    where, params = _where(reason, status, category, q, has, source, hidden, org,
+                           niche, cat)
     order = SORTS.get(sort, SORTS["score"])
     c = db.conn()
     total = c.execute(f"SELECT COUNT(*) n FROM leads {where}", params).fetchone()["n"]
@@ -233,12 +248,15 @@ def get_leads(reason: str = "", status: str = "", category: str = "", q: str = "
 
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(niche: str = ""):
     c = db.conn()
 
     # Везде считаем только видимые: скрытые убраны намеренно
-    # и не должны раздувать цифры на карточках.
-    visible = "COALESCE(hidden, 0) = 0"
+    # и не должны раздувать цифры на карточках. Открыта вкладка ниши —
+    # сводка тоже только по ней. Номер проверен isdigit, в запрос его
+    # можно подставить как есть.
+    scope = f" AND niche_id = {int(niche)}" if str(niche).isdigit() else ""
+    visible = "COALESCE(hidden, 0) = 0" + scope
 
     def group(field):
         return {r[field] or "—": r["n"] for r in c.execute(
@@ -251,7 +269,7 @@ def get_stats():
         "OR COALESCE(telegram,'') <> '' OR COALESCE(vk,'') <> '')").fetchone()["n"]
     hot = c.execute(f"SELECT COUNT(*) n FROM leads WHERE {visible} AND score >= ?",
                     (scoring.HOT,)).fetchone()["n"]
-    hidden_count = c.execute("SELECT COUNT(*) n FROM leads WHERE hidden = 1").fetchone()["n"]
+    hidden_count = c.execute(f"SELECT COUNT(*) n FROM leads WHERE hidden = 1{scope}").fetchone()["n"]
     liquidated = c.execute(
         f"SELECT COUNT(*) n FROM leads WHERE {visible} AND "
         "COALESCE(org_status,'') IN ('LIQUIDATED','BANKRUPT')").fetchone()["n"]
@@ -700,7 +718,6 @@ def create_lead(request: Request, payload: dict = Body(...)):
 
     lead = {
         "name": name,
-        "category": (payload.get("category") or "").strip() or "Добавлен вручную",
         "address": (payload.get("address") or "").strip(),
         "lat": None, "lon": None,
         "source": "manual",
@@ -722,9 +739,22 @@ def create_lead(request: Request, payload: dict = Body(...)):
 
     processed = pipeline.process_lead(lead, do_dadata=bool(config.DADATA_TOKEN))
 
+    # Нишу и категорию разбираем после проверки сайта, а не до: новая ниша
+    # создаётся записью в базу, и держать её незакоммиченной, пока идёт
+    # аудит, значило бы на эти секунды запереть базу для всех остальных.
+    # В базу она попадёт одним commit вместе с объектом.
     c = db.conn()
-    fields = [f for f in db.UPSERT_FIELDS + ["source", "source_ref", "website_manual",
-                                             "created_at", "updated_at"]
+    try:
+        niche_id, category_id, created = niches.pick(c, payload, request.state.login)
+    except ValueError as exc:
+        c.rollback()
+        raise HTTPException(400, str(exc))
+    cat_row = niches.category(c, category_id) if category_id else None
+    processed.update({"niche_id": niche_id, "category_id": category_id,
+                      "category": cat_row["title"] if cat_row else ""})
+
+    fields = [f for f in db.UPSERT_FIELDS + ["niche_id", "source", "source_ref",
+                                             "website_manual", "created_at", "updated_at"]
               if f in processed or f in ("created_at", "updated_at")]
     processed["created_at"] = processed["updated_at"] = db.now()
     ph = ", ".join("?" * len(fields))
@@ -734,6 +764,8 @@ def create_lead(request: Request, payload: dict = Body(...)):
 
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     history.log(request.state.login, "create", lead=row, new=row["name"])
+    for what in created:
+        history.log(request.state.login, "niches", new=f"Создал {what}")
     if (payload.get("note") or "").strip():
         _add_note(request.state.login, row, payload["note"].strip())
         row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -764,6 +796,7 @@ CONTACT_FIELDS = ("phone", "telegram", "vk", "whatsapp", "email")
 # «Телефон», а не phone. Правимые руками поля берём из EDITABLE, остальное —
 # то, что вообще способно попасть в журнал.
 FIELD_LABELS = dict(EDITABLE, **{
+    "niche": "Ниша",
     "status": "Статус",
     "priority": "Приоритет",
     "hidden": "Скрыт из списка",
@@ -793,6 +826,36 @@ FIELD_LABELS = dict(EDITABLE, **{
 })
 
 
+NICHE_KEYS = ("niche_id", "niche_new", "category_id", "category_new")
+
+
+def _edit_niche(c, login, row, payload):
+    """Ставит лиду нишу и категорию из формы правки. True, если что-то поменялось."""
+    if not any(k in payload for k in NICHE_KEYS):
+        return False
+    niche_id, category_id, created = niches.pick(c, payload, login,
+                                                 fallback_niche=row["niche_id"])
+    if (niche_id, category_id) == (row["niche_id"], row["category_id"]):
+        return False
+
+    before = niches.titles(c, row)
+    niches.assign(c, row["id"], niche_id, category_id)
+    # Сбор не должен вернуть категорию, которую человек сменил руками
+    manual = set(db.manual_list(row["manual_fields"])) | {"category"}
+    c.execute("UPDATE leads SET manual_fields=? WHERE id=?",
+              (json.dumps(sorted(manual), ensure_ascii=False), row["id"]))
+    c.commit()
+
+    after = niches.titles(c, c.execute("SELECT * FROM leads WHERE id=?",
+                                       (row["id"],)).fetchone())
+    for what in created:
+        history.log(login, "niches", new=f"Создал {what}")
+    for i, field in enumerate(("niche", "category")):
+        if before[i] != after[i]:
+            history.log(login, "edit", lead=row, field=field, old=before[i], new=after[i])
+    return True
+
+
 @app.post("/api/lead/{lead_id}/edit")
 def edit_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     """Правит поля карточки руками и защищает их от следующего сбора."""
@@ -801,11 +864,23 @@ def edit_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     if not row:
         raise HTTPException(404, "Лид не найден")
 
+    # Нишу и категорию меняем первыми и отдельно: они выбираются из
+    # справочника, а не вписываются текстом. Строку перечитываем — ниже
+    # список ручных правок собирается уже с учётом категории.
+    try:
+        niche_changed = _edit_niche(c, request.state.login, row, payload)
+    except ValueError as exc:
+        c.rollback()
+        raise HTTPException(400, str(exc))
+    if niche_changed:
+        row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+
     current = db.row_to_dict(row)
     changes, touched = {}, set(current.get("manual_fields") or [])
 
     for field, value in payload.items():
-        if field not in EDITABLE:
+        # Категория текстом больше не правится — только через справочник
+        if field not in EDITABLE or field == "category":
             continue
         value = (value or "").strip()
 
@@ -981,7 +1056,8 @@ def rescore():
 # ── выгрузка и загрузка ──────────────────────────────────────────────────────
 
 EXPORT_COLUMNS = [
-    ("name", "Название"), ("category", "Категория"), ("reason_text", "Признак"),
+    ("name", "Название"), ("niche", "Ниша"), ("category", "Категория"),
+    ("reason_text", "Признак"),
     ("priority", "Мой приоритет"), ("score", "Балл"), ("phone", "Телефон"), ("telegram", "Telegram"),
     ("vk", "ВКонтакте"), ("whatsapp", "WhatsApp"), ("email", "Почта"),
     ("website", "Сайт"), ("address", "Адрес"), ("missing", "Чего не хватает"),
@@ -997,8 +1073,9 @@ EXPORT_COLUMNS = [
 @app.get("/api/export.csv")
 def export_csv(reason: str = "", status: str = "", category: str = "",
                q: str = "", has: str = "", source: str = "", hidden: str = "",
-               org: str = "", sort: str = "score"):
-    where, params = _where(reason, status, category, q, has, source, hidden, org)
+               org: str = "", niche: str = "", cat: str = "", sort: str = "score"):
+    where, params = _where(reason, status, category, q, has, source, hidden, org,
+                           niche, cat)
     # Тот же порядок, что и на экране: иначе выгрузка не совпадёт со списком
     order = SORTS.get(sort, SORTS["score"])
     rows = db.conn().execute(
@@ -1011,6 +1088,8 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
     # Авторы последних заметок — одним запросом на всю выгрузку, а не по
     # запросу на строку: в выгрузку уходит вся база целиком.
     authors = db.last_note_authors()
+    niche_titles = {r["id"]: r["title"] for r in
+                    db.conn().execute("SELECT id, title FROM niches")}
 
     for r in rows:
         d = db.row_to_dict(r)
@@ -1023,6 +1102,8 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
                 v = ", ".join(f"{k}: {s}" for k, s in (v or {}).items())
             elif key == "status":
                 v = STATUSES.get(v, v)
+            elif key == "niche":
+                v = niche_titles.get(d.get("niche_id"), "")
             elif key == "note" and v:
                 who = authors.get(d["id"])
                 v = f"{who}: {v}" if who and who != db.SYSTEM_LOGIN else v
@@ -1037,19 +1118,42 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
 
 
 @app.post("/api/import")
-async def import_csv(request: Request, file: UploadFile = File(...)):
-    """Ручной импорт: name;website;phone;address;category. Лиды сразу проверяются."""
+async def import_csv(request: Request, file: UploadFile = File(...), niche: str = ""):
+    """Ручной импорт: name;website;phone;address;category;niche. Лиды сразу проверяются.
+
+    Без колонки niche объекты попадают в нишу открытой вкладки. Незнакомые
+    ниши и категории из файла заводятся — так же, как из формы объекта.
+    """
+    c = db.conn()
+    fallback = int(niche) if str(niche).isdigit() and niches.niche(c, int(niche))         else niches.default_id(c)
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
     dialect = csv.Sniffer().sniff(raw[:2000], delimiters=";,\t") \
         if raw.strip() else csv.excel
     reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
 
-    added = 0
+    added, created = 0, []
     for i, row in enumerate(reader):
         row = { (k or "").strip().lower(): (v or "").strip() for k, v in row.items() }
         name = row.get("name") or row.get("название")
         if not name:
             continue
+
+        niche_id = fallback
+        niche_title = row.get("niche") or row.get("ниша")
+        if niche_title:
+            niche_id, made = niches.ensure_niche(c, niche_title, request.state.login)
+            if made:
+                created.append(f"нишу «{niches.clean(niche_title)}»")
+        category_id = None
+        cat_title = row.get("category") or row.get("категория")
+        if niches.usable(cat_title):
+            category_id, made = niches.ensure_category(c, niche_id, cat_title,
+                                                       request.state.login)
+            if made:
+                created.append(f"категорию «{niches.clean(cat_title)}»")
+        # Новые строки справочника фиксируем сразу: проверка сайта ниже
+        # идёт секунды, и держать базу запертой всё это время нельзя
+        c.commit()
 
         # Номера из чужого файла приводим к тому же виду, что и собранные сами,
         # иначе ссылки tel: в интерфейсе не работают.
@@ -1057,7 +1161,8 @@ async def import_csv(request: Request, file: UploadFile = File(...)):
 
         lead = {
             "name": name,
-            "category": row.get("category") or row.get("категория") or "Импорт",
+            "niche_id": niche_id,
+            "category_id": category_id,
             "address": row.get("address") or row.get("адрес") or "",
             "website": utils.decode_idna(row.get("website") or row.get("сайт") or ""),
             "phone": phones[0] if phones else "",
@@ -1074,7 +1179,104 @@ async def import_csv(request: Request, file: UploadFile = File(...)):
         added += 1
 
     history.log(request.state.login, "import", new=f"{added}")
+    for what in created:
+        history.log(request.state.login, "niches", new=f"Создал {what}")
     return {"ok": True, "added": added}
+
+
+# ── ниши и категории ─────────────────────────────────────────────────────────
+# Смотреть и создавать может любой сотрудник, всё остальное — владелец базы.
+
+@app.get("/api/niches")
+def niches_list():
+    return niches.listing()
+
+
+def _niche_call(fn, *args):
+    """Вызов справочника: ошибка ввода — 400, а изменения — одним commit."""
+    c = db.conn()
+    try:
+        result = fn(c, *args)
+    except ValueError as exc:
+        c.rollback()
+        raise HTTPException(400, str(exc))
+    c.commit()
+    return result
+
+
+@app.post("/api/niches")
+def niche_create(request: Request, payload: dict = Body(...)):
+    niche_id, made = _niche_call(niches.ensure_niche, payload.get("title"),
+                                 request.state.login)
+    if made:
+        history.log(request.state.login, "niches",
+                    new=f"Создал нишу «{niches.clean(payload.get('title'))}»")
+    return {"id": niche_id, "created": made, **niches.listing()}
+
+
+@app.post("/api/niches/{niche_id}/categories")
+def category_create(request: Request, niche_id: int, payload: dict = Body(...)):
+    cat_id, made = _niche_call(niches.ensure_category, niche_id, payload.get("title"),
+                               request.state.login)
+    if made:
+        history.log(request.state.login, "niches",
+                    new=f"Создал категорию «{niches.clean(payload.get('title'))}»")
+    return {"id": cat_id, "created": made, **niches.listing()}
+
+
+@app.post("/api/niches/{niche_id}")
+def niche_update(request: Request, niche_id: int, payload: dict = Body(...)):
+    """Переименовать, объединить с другой или сдвинуть в списке."""
+    who = _admin_only(request)
+    if payload.get("merge_into"):
+        old, new, n = _niche_call(niches.merge_niches, niche_id, int(payload["merge_into"]))
+        history.log(who, "niches", old=old, new=f"Нишу «{old}» объединил с «{new}», "
+                                                f"перенесено объектов: {n}")
+    elif payload.get("move"):
+        _niche_call(niches.move, "niches", niche_id, int(payload["move"]))
+    elif "title" in payload:
+        old, new = _niche_call(niches.rename_niche, niche_id, payload["title"])
+        history.log(who, "niches", old=old, new=f"Нишу «{old}» переименовал в «{new}»")
+    return niches.listing()
+
+
+@app.delete("/api/niches/{niche_id}")
+def niche_delete(request: Request, niche_id: int):
+    who = _admin_only(request)
+    title = _niche_call(niches.delete_niche, niche_id)
+    history.log(who, "niches", old=title, new=f"Удалил нишу «{title}»")
+    return niches.listing()
+
+
+@app.post("/api/categories/{category_id}")
+def category_update(request: Request, category_id: int, payload: dict = Body(...)):
+    who = _admin_only(request)
+    if payload.get("merge_into"):
+        old, new, n = _niche_call(niches.merge_categories, category_id,
+                                  int(payload["merge_into"]))
+        history.log(who, "niches", old=old, new=f"Категорию «{old}» объединил с «{new}», "
+                                                f"перенесено объектов: {n}")
+    elif payload.get("move"):
+        _niche_call(niches.move, "categories", category_id, int(payload["move"]))
+    elif "title" in payload:
+        old, new = _niche_call(niches.rename_category, category_id, payload["title"])
+        history.log(who, "niches", old=old, new=f"Категорию «{old}» переименовал в «{new}»")
+    return niches.listing()
+
+
+@app.delete("/api/categories/{category_id}")
+def category_delete(request: Request, category_id: int):
+    who = _admin_only(request)
+    title = _niche_call(niches.delete_category, category_id)
+    history.log(who, "niches", old=title, new=f"Удалил категорию «{title}»")
+    return niches.listing()
+
+
+@app.get("/niches")
+def niches_page(request: Request):
+    if not auth.is_admin(getattr(request.state, "login", "")):
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(config.BASE_DIR / "static" / "niches.html")
 
 
 # ── референсы: хорошие сайты по типам объектов ───────────────────────────────

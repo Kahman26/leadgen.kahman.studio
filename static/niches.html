@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>Ниши и категории — сборщик лидов</title>
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/favicon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/favicon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#0e0e10">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Ниши и категории</h1>
+  <span class="city" id="summary"></span>
+  <span class="spacer"></span>
+  <a class="btn" href="/">← К лидам</a>
+</header>
+
+<div class="wrap" style="max-width:900px">
+  <p class="muted" style="margin:0 0 16px">
+    Создавать ниши и категории может любой сотрудник — прямо из формы объекта.
+    Здесь владелец базы наводит порядок: переименовывает, объединяет дубли
+    и меняет порядок вкладок. Объединение переносит все объекты, а старое
+    название запоминается — сбор, который его присылает, попадёт куда надо.
+  </p>
+
+  <div class="nadd" style="margin:0 0 18px">
+    <input type="text" id="newNiche" placeholder="Новая ниша" autocomplete="off">
+    <button id="addNiche" class="primary">Добавить нишу</button>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<dialog id="mergeDialog">
+  <h3 style="margin-top:0" id="mergeTitle">Объединить</h3>
+  <div class="err" id="mergeErr"></div>
+  <p class="muted" id="mergeText" style="margin-top:0"></p>
+  <label class="fld"><span>С чем объединить</span>
+    <select id="mergeTarget"></select></label>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+    <button id="mergeCancel">Отмена</button>
+    <button id="mergeGo" class="primary">Объединить</button>
+  </div>
+</dialog>
+
+<script src="/static/heartbeat.js"></script>
+<script src="/static/niches.js"></script>
+</body>
+</html>
