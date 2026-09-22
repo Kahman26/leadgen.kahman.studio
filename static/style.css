@@ -630,16 +630,13 @@ b.warn, .warn { color: var(--warm); }
 .filters button.per.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ── вкладки ниш ────────────────────────────────────────────────────────── */
-/* Ниш восемь и больше — на ноутбуке они в одну строку не влезают, а
-   спрятанная за краем вкладка всё равно что её нет. Поэтому переносим.
-   На телефоне две-три строки вкладок съели бы пол-экрана — там листаем вбок. */
+/* Вкладки в одну строку: что не влезло, app.js прячет (fitTabs), а галочка
+   справа раскрывает спрятанное следующими строками. */
 .tabs {
-  display: flex; flex-wrap: wrap; gap: 0 2px; margin-bottom: 12px;
+  display: flex; flex-wrap: nowrap; gap: 0 2px; margin-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
-@media (max-width: 760px) {
-  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
-}
+.tabs.open { flex-wrap: wrap; }
 .tabs .tab {
   flex: 0 0 auto; white-space: nowrap;
   background: none; border: none; border-bottom: 2px solid transparent;
@@ -656,6 +653,13 @@ b.warn, .warn { color: var(--warm); }
 }
 .tabs .tab.on .tabn { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .tabs .tabadd { color: var(--muted); font-size: 16px; line-height: 1; padding: 6px 12px; }
+.tabs .tabmore {
+  margin-left: auto; padding: 6px 10px 5px; color: var(--muted);
+  display: inline-flex; align-items: center;
+}
+.tabs .tabmore svg { transition: transform .15s; }
+.tabs .tabmore[aria-expanded="true"] { color: var(--accent); }
+.tabs .tabmore[aria-expanded="true"] svg { transform: rotate(180deg); }
 
 /* Ниша и категория в формах: списки во всю ширину, поле для нового
    названия — прямо под своим списком */

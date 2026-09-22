@@ -13,6 +13,7 @@ let showAll = false;     // развёрнута ли дополнительна
 let histOpen = false;    // развёрнута ли история изменений
 let NICHES = { niches: [], total: 0, default_id: null };   // справочник ниш
 let currentNiche = '';   // открытая вкладка: номер ниши или '' — все ниши
+let tabsOpen = false;    // раскрыты ли вкладки, не поместившиеся в строку
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -105,11 +106,18 @@ function renderTabs() {
   $('nicheTabs').innerHTML =
     tab('', 'Все', NICHES.total) +
     NICHES.niches.map((n) => tab(n.id, n.title, n.count)).join('') +
-    '<button class="tab tabadd" id="tabAdd" title="Новая ниша">+</button>';
+    '<button class="tab tabadd" id="tabAdd" title="Новая ниша">+</button>' +
+    `<button class="tab tabmore" id="tabMore" aria-expanded="false">
+       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+         <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
 
   $('nicheTabs').querySelectorAll('[data-niche]').forEach((b) => {
-    b.onclick = () => openNiche(b.dataset.niche);
+    // Выбрали нишу из раскрытого списка — сворачиваем: выбранная вкладка
+    // останется в первой строке, остальные строки больше не нужны
+    b.onclick = () => { tabsOpen = false; openNiche(b.dataset.niche); };
   });
+  $('tabMore').onclick = () => { tabsOpen = !tabsOpen; fitTabs(); };
   $('tabAdd').onclick = async () => {
     const title = (prompt('Название новой ниши') || '').trim();
     if (!title) return;
@@ -123,13 +131,57 @@ function renderTabs() {
     } catch (e) { alert('Не получилось: ' + e.message); }
   };
 
-  // На телефоне вкладки листаются вбок — открытая не должна прятаться за краем
-  const on = $('nicheTabs').querySelector('.tab.on');
-  if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  fitTabs();
 
   const n = nicheById(currentNiche);
   $('cityLabel').textContent = CFG.city + ' · ' + (n ? n.title : 'все ниши');
   document.title = n ? `${n.title} — сборщик лидов` : 'Сборщик лидов';
+}
+
+// Вкладки стоят в одну строку. Что не влезло — прячется, а галочка справа
+// раскрывает спрятанное следующими строками. Открытая ниша видна всегда,
+// даже если по порядку она попала бы в спрятанные: место под неё
+// резервируется первым, остальные идут по порядку, пока хватает ширины.
+function fitTabs() {
+  const box = $('nicheTabs');
+  const more = $('tabMore');
+  const add = $('tabAdd');
+  if (!more) return;
+  const tabs = [...box.querySelectorAll('[data-niche]')];
+
+  box.classList.remove('open');
+  tabs.forEach((t) => { t.hidden = false; });
+  more.hidden = true;
+
+  const gap = parseFloat(getComputedStyle(box).columnGap) || 0;
+  const w = (el) => el.offsetWidth + gap;
+  const all = tabs.reduce((s, t) => s + w(t), 0) + w(add);
+
+  let hidden = 0;
+  if (all > box.clientWidth) {
+    more.hidden = false;
+    const active = tabs.find((t) => t.classList.contains('on'));
+    let room = box.clientWidth - w(add) - w(more) - (active ? w(active) : 0);
+    let fits = true;
+    for (const t of tabs) {
+      if (t === active) continue;
+      if (fits && w(t) <= room) {
+        room -= w(t);
+      } else {
+        fits = false;          // дальше не берём даже узкие: порядок важнее
+        t.hidden = true;
+        hidden++;
+      }
+    }
+  }
+
+  if (!hidden) tabsOpen = false;
+  if (tabsOpen) {
+    tabs.forEach((t) => { t.hidden = false; });
+    box.classList.add('open');
+  }
+  more.setAttribute('aria-expanded', String(tabsOpen));
+  more.title = tabsOpen ? 'Свернуть' : `Ещё ниш: ${hidden}`;
 }
 
 // Фильтр типов показывает категории только открытой ниши. Во «Всех» —
@@ -1269,6 +1321,13 @@ async function init() {
     u.searchParams.set('niche', currentNiche);
     history.replaceState(null, '', u);
   }
+  // Сколько вкладок влезает, зависит от ширины окна
+  let fitTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(fitTabs, 100);
+  });
+
   // Кнопки «назад» и «вперёд» браузера переключают вкладки ниш
   window.addEventListener('popstate', () => {
     openNiche(new URLSearchParams(location.search).get('niche') || '', false);
