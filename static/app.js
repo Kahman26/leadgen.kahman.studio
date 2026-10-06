@@ -357,6 +357,15 @@ async function catchToQueue() {
   };
   $('catchClose').onclick = close;
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  // Вкладка уже на «/», и ссылка «/#queue» сменила бы только хвост адреса —
+  // без перезагрузки интерфейс не поднимется. Таймер при этом останавливаем
+  $('catchFoot').addEventListener('click', (e) => {
+    if (!e.target.closest('a[href="/#queue"]')) return;
+    e.preventDefault();
+    clearInterval(timer);
+    location.hash = 'queue';
+    location.reload();
+  });
 
   const show = (kind, title, text, autoClose) => {
     $('catchIcon').className = 'catchicon ' + kind;
@@ -502,6 +511,17 @@ function bookingText(l) {
   return 'нет — только телефон';
 }
 
+// «7 окт, 14:32»; год — только если не текущий
+function editedText(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const date = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short',
+    ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) }).replace('.', '');
+  return `${date}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 function scoreClass(n) { return n >= CFG.hot ? 'hot' : n >= CFG.hot / 2 ? 'warm' : 'cold'; }
 
 async function loadLeads() {
@@ -512,7 +532,8 @@ async function loadLeads() {
     <tr data-id="${l.id}" class="${l.hidden ? 'is-hidden ' : ''}${String(l.id) === String(selectedId) ? 'selected' : ''}">
       <td>
         <div class="name">${esc(l.name)}</div>
-        <div class="sub">${esc(kindText(l))}</div>
+        <div class="sub">${esc(kindText(l))}${l.edited_at
+          ? ` · <span title="Последняя правка">изм. ${esc(editedText(l.edited_at))}</span>` : ''}</div>
       </td>
       <td><span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span></td>
       <td class="num">${l.priority
@@ -992,7 +1013,7 @@ async function openLead(id) {
       <h2>${esc(l.name)}</h2>
       <button class="close" onclick="closeLead()" title="Закрыть">✕</button>
     </div>
-    <div class="cardmeta">${esc((nicheById(l.niche_id) || {}).title || '')} ·
+    <div class="cardmeta">${l.edited_at ? `Изменён ${esc(editedText(l.edited_at))} · ` : ''}${esc((nicheById(l.niche_id) || {}).title || '')} ·
       ${esc(l.category || 'без категории')} · балл
       <b class="score ${scoreClass(l.score)}">${l.score}</b> ·
       <span class="badge r-${esc(l.reason_code)}">${esc(l.reason_text || '')}</span>

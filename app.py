@@ -169,6 +169,8 @@ SORTS = {
     "name": "name COLLATE NOCASE ASC",
     "new": "id DESC",
     "checked": "checked_at DESC",
+    # Свежие правки сверху; ни разу не правленные — в конце
+    "edited": "COALESCE(edited_at, '') = '', edited_at DESC, id DESC",
 }
 
 
@@ -238,8 +240,9 @@ def _where(reason, status, category, q, has, source, hidden="", org="",
         sql.append("source = ?")
         params.append(source)
     if q:
-        sql.append("(name LIKE ? OR address LIKE ? OR website LIKE ? OR inn LIKE ?)")
-        params += [f"%{q}%"] * 4
+        sql.append("(ulower(name) LIKE ? OR ulower(address) LIKE ? "
+                   "OR ulower(website) LIKE ? OR inn LIKE ?)")
+        params += [f"%{db.fold(q.strip())}%"] * 4
     if has == "contact":
         sql.append("(COALESCE(phone,'') <> '' OR COALESCE(telegram,'') <> '' "
                    "OR COALESCE(vk,'') <> '' OR COALESCE(whatsapp,'') <> '')")

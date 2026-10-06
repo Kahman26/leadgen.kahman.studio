@@ -319,12 +319,20 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 
+def fold(value):
+    """Строка для поиска: нижний регистр, ё = е."""
+    return value.lower().replace("ё", "е") if isinstance(value, str) else value
+
+
 def conn():
     """Отдельное соединение на поток — pipeline работает в фоне."""
     if not hasattr(_local, "c"):
         c = sqlite3.connect(config.DB_PATH, timeout=30, check_same_thread=False)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
+        # LIKE и lower() в SQLite не знают кириллицы: «каме» не находило
+        # «Камелот». Поиск сравнивает через эту функцию, ё приравнена к е
+        c.create_function("ulower", 1, fold, deterministic=True)
         _local.c = c
     return _local.c
 
@@ -393,6 +401,9 @@ MIGRATIONS = [
     # Данные с карт, не совпавшие с базой: {поле: {value, source, at, by}}.
     # Основное значение они не перезаписывают — лежат рядом до решения человека
     ("map_alt", "TEXT DEFAULT ''"),
+    # Когда объект последний раз трогал человек: правка, слияние с картами,
+    # статус, заметка. Ставит журнал; сбор и перепроверка его не двигают
+    ("edited_at", "TEXT DEFAULT ''"),
 ]
 
 
@@ -408,6 +419,14 @@ def init():
     # Индексы строим только после ALTER TABLE: часть из них ссылается
     # на колонки, которых в старой базе ещё не было.
     c.executescript(INDEXES)
+    # Для объектов, которых трогали до появления колонки, — время из журнала
+    c.execute("""
+        UPDATE leads SET edited_at = (
+            SELECT strftime('%Y-%m-%dT%H:%M:%S', MAX(h.ts), 'unixepoch', 'localtime')
+            FROM history h WHERE h.lead_id = leads.id AND h.login <> '@system')
+        WHERE COALESCE(edited_at, '') = ''
+          AND EXISTS (SELECT 1 FROM history h WHERE h.lead_id = leads.id AND h.login <> '@system')
+    """)
     c.commit()
     _migrate_notes(c)
     _seed_settings(c)

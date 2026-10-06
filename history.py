@@ -94,6 +94,10 @@ def log(login, action, lead=None, field="", old="", new=""):
         (int(time.time()), login or "", lead_id, lead_name, action, field,
          _text(old), _text(new)),
     )
+    # Действие человека — объект «изменён». Сбор сюда не попадает, иначе
+    # еженощная перепроверка перемешивала бы сортировку по правкам
+    if lead_id and login and login != SYSTEM:
+        db.conn().execute("UPDATE leads SET edited_at=? WHERE id=?", (db.now(), lead_id))
     db.conn().commit()
 
 
