@@ -43,6 +43,20 @@ PUBLIC_PATHS = {"/login", "/robots.txt", "/favicon.ico", "/site.webmanifest",
 
 
 @app.middleware("http")
+async def no_stale_files(request: Request, call_next):
+    """Страницы и скрипты — всегда свежие.
+
+    Без Cache-Control браузер сам решает, сколько держать файл, и держит
+    давно не менявшийся сутками. После деплоя получалась новая страница со
+    старым скриптом (или наоборот), и интерфейс ломался на ровном месте.
+    no-cache не запрещает кеш, а велит сверяться: не изменился — 304.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
     if path in PUBLIC_PATHS or path.startswith("/static/"):

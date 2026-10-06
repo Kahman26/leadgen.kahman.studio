@@ -763,3 +763,4 @@ dialog.mergedlg { max-width: 860px; width: calc(100% - 32px); }
 .mapalt-btns button { padding: 3px 9px; font-size: 12px; }
 .maptag { font-size: 11px; color: var(--accent); background: var(--accent-soft);
   border-radius: 4px; padding: 0 4px; }
+#btnQueue.dim { color: var(--muted); }

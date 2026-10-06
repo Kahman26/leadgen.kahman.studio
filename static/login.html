@@ -94,7 +94,9 @@
       if (r.ok && data.ok) {
         // Возвращаемся туда, откуда нас развернули на вход
         const next = new URLSearchParams(location.search).get('next');
-        location.href = (next && next.startsWith('/')) ? next : '/';
+        // Хвост после «#» сервер не видит, но браузер донёс его досюда:
+        // там карточка с карт, без него после входа форма не откроется
+        location.href = ((next && next.startsWith('/')) ? next : '/') + location.hash;
         return;
       }
       showError(data.error || 'Не удалось войти');

@@ -1809,10 +1809,10 @@ async function init() {
   // ── очередь карточек с карт ──────────────────────────────────────────
   let queueItems = [];
 
+  // Кнопка видна всегда: через неё же включается режим очереди
   const showQueueCount = (n) => {
     $('queueCount').textContent = n;
-    // Кнопка видна, когда есть что разбирать или очередь включена
-    $('btnQueue').hidden = !n && mapMode() !== 'queue';
+    $('btnQueue').classList.toggle('dim', !n);
   };
   const loadQueueCount = async () => {
     try { showQueueCount((await api('/api/queue/count')).count); } catch (e) { /* не критично */ }
@@ -1932,6 +1932,11 @@ async function init() {
   };
 
   loadQueueCount();
+  // Карточки кидают с карт, пока эта вкладка в фоне, — вернулись сюда,
+  // обновили счётчик
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadQueueCount();
+  });
   if (location.hash === '#queue') {
     history.replaceState(null, '', location.pathname + location.search);
     openQueue();
