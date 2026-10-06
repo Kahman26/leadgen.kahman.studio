@@ -229,7 +229,7 @@ td .sub { color: var(--muted); font-size: 12px; }
 .st { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
 .st.deal { color: var(--ok); border-color: var(--ok); }
 .st.refused { color: var(--muted); }
-.st.in_work, .st.contacted, .st.audit, .st.proposal { color: var(--accent); border-color: var(--accent); }
+.st.in_work, .st.callback, .st.audit, .st.proposal { color: var(--accent); border-color: var(--accent); }
 .st.no_answer { color: var(--warm); border-color: var(--warm); }
 /* Три попытки и больше — по лиду пора принимать решение, а не звонить дальше. */
 .st .tries.warn { color: var(--hot); }
@@ -799,3 +799,17 @@ dialog.mergedlg { max-width: 860px; width: calc(100% - 32px); }
 .platforms { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 8px;
   font-size: 13px; }
 .chip.plat { background: transparent; border: 1px solid var(--warm); color: var(--warm); }
+
+/* Перезвонить: дата и выбор даты */
+.st.callback.cb-today { color: var(--warm); border-color: var(--warm); }
+.st.callback.cb-late { color: var(--hot); border-color: var(--hot); }
+.cbline { margin-top: 10px; font-size: 14px; }
+.cbline.cb-today b { color: var(--warm); }
+.cbline.cb-late b { color: var(--hot); }
+.cbline .linkbtn { margin: 0 0 0 6px; padding: 0; }
+.cbpick { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--accent);
+  border-radius: 8px; background: var(--accent-soft); }
+.cbtitle { font-weight: 600; margin-bottom: 8px; font-size: 14px; }
+.cbrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.cbrow button { padding: 5px 10px; font-size: 13px; }
+.cbrow input[type=date] { padding: 5px 8px; }

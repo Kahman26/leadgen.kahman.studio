@@ -17,7 +17,7 @@ window.HistView = (() => {
     const v = String(raw ?? '');
     if (v === '') return '<i class="hempty">пусто</i>';
     if (field === 'hidden') return v === '1' ? 'скрыт' : 'в списке';
-    if (field === 'status') return esc((window.CFG?.statuses || {})[v] || v);
+    if (field === 'status') return esc((window.CFG?.status_labels || window.CFG?.statuses || {})[v] || v);
     if (field === 'reason_code') return esc((window.CFG?.reasons || {})[v] || v);
     if (field === 'ai_is_open') {
       return { true: 'работает', false: 'закрылся' }[v] || esc(v);

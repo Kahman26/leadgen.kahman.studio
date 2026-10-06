@@ -407,6 +407,8 @@ MIGRATIONS = [
     # Площадки, где объект есть, но которые не его сайт (enrich/aggregators.py):
     # [{name, kind, url, source}]
     ("aggregators", "TEXT DEFAULT ''"),
+    # Когда перезвонить (ГГГГ-ММ-ДД) — для статуса «Перезвонить»
+    ("callback_at", "TEXT DEFAULT ''"),
 ]
 
 
@@ -422,6 +424,9 @@ def init():
     # Индексы строим только после ALTER TABLE: часть из них ссылается
     # на колонки, которых в старой базе ещё не было.
     c.executescript(INDEXES)
+    # «Связались» заменён на «Перезвонить»: поговорили — договорились, когда
+    # набрать снова. Дату у старых лидов человек поставит сам
+    c.execute("UPDATE leads SET status='callback' WHERE status='contacted'")
     # Для объектов, которых трогали до появления колонки, — время из журнала
     c.execute("""
         UPDATE leads SET edited_at = (

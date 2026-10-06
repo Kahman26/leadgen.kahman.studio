@@ -150,20 +150,22 @@ STATUSES = {
     "new": "Новый",
     "auto_checked": "Автопроверка",      # Claude поискал, человек ещё не смотрел
     "in_work": "Ручная проверка",
+    "refused": "Отказ",
     "no_answer": "Не дозвонились",
-    "contacted": "Связались",
+    "callback": "Перезвонить",           # поговорили, договорились набрать в callback_at
     "audit": "Аудит",                    # согласились на бесплатный аудит сайта
     "proposal": "КП отправлено",         # аудит и смета у клиента, ждём решения
-    "refused": "Отказ",
     "deal": "Сделка",
 }
+# Подписи для журнала: там остались записи о статусах, которых уже нет
+STATUS_LABELS = dict(STATUSES, contacted="Связались")
 
 # Исход попытки дозвона и как он читается в ленте журнала.
 CALL_OUTCOMES = {"no_answer": "не ответили", "answered": "дозвонились"}
 
 # Статус, в который перевели лида, сам говорит об исходе звонка: нажимать
 # ещё и «записать попытку» продажник не должен.
-STATUS_CALL = {"no_answer": "no_answer", "contacted": "answered"}
+STATUS_CALL = {"no_answer": "no_answer", "callback": "answered"}
 
 SORTS = {
     "score": "score DESC, id DESC",
@@ -172,6 +174,8 @@ SORTS = {
     "name": "name COLLATE NOCASE ASC",
     "new": "id DESC",
     "checked": "checked_at DESC",
+    # Ближайшие перезвоны сверху, просроченные — первыми
+    "callback": "status <> 'callback', COALESCE(NULLIF(callback_at, ''), '9999') ASC, id DESC",
     # Свежие правки сверху; ни разу не правленные — в конце
     "edited": "COALESCE(edited_at, '') = '', edited_at DESC, id DESC",
 }
@@ -182,6 +186,9 @@ def get_config(request: Request):
     return {
         "city": config.CITY_NAME,
         "statuses": STATUSES,
+        "status_labels": STATUS_LABELS,
+        # Сегодня по городу: что считать просроченным перезвоном
+        "today": backup.local_now().date().isoformat(),
         "reasons": {k: v[0] for k, v in scoring.REASONS.items()},
         "dadata_ready": bool(config.DADATA_TOKEN),
         "hot": scoring.HOT,
@@ -233,7 +240,11 @@ def _where(reason, status, category, q, has, source, hidden="", org="",
     if reason:
         sql.append("reason_code = ?")
         params.append(reason)
-    if status:
+    if status == "callback_due":
+        # Перезвонить сегодня или уже надо было — по дате города
+        sql.append("status = 'callback' AND COALESCE(callback_at, '') <> '' AND callback_at <= ?")
+        params.append(backup.local_now().date().isoformat())
+    elif status:
         sql.append("status = ?")
         params.append(status)
     if category:
@@ -427,7 +438,15 @@ def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     # тем же полем, поэтому здесь она уходит в ленту, а не переписывает поле.
     note_text = (payload.get("note") or "").strip() if "note" in payload else ""
     fields = {k: v for k, v in payload.items()
-              if k in ("status", "hidden", "hidden_reason", "priority")}
+              if k in ("status", "hidden", "hidden_reason", "priority", "callback_at")}
+    if "callback_at" in fields:
+        value = (fields["callback_at"] or "").strip()
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(400, "Дата перезвона — в виде ГГГГ-ММ-ДД")
+        fields["callback_at"] = value
     if "hidden" in fields:
         fields["hidden"] = 1 if fields["hidden"] else 0
     if "priority" in fields:
@@ -450,6 +469,9 @@ def update_lead(request: Request, lead_id: int, payload: dict = Body(...)):
     before = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
     if not before:
         raise HTTPException(404, "Лид не найден")
+    # Ушли со статуса «Перезвонить» — напоминание больше не нужно
+    if fields.get("status") and fields["status"] != "callback" and before["callback_at"]:
+        fields["callback_at"] = ""
 
     if fields:
         sets = ", ".join(f"{k}=?" for k in fields)
@@ -978,6 +1000,7 @@ FIELD_LABELS = dict(EDITABLE, **{
     "ai_checked_at": "Дата автопроверки",
     "ai_model": "Чем проверено",
     "ai_error": "Ошибка автопроверки",
+    "callback_at": "Перезвонить",
     "map_url": "Карточка на карте",
     "map_alt": "Данные с карт",
 })

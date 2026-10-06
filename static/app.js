@@ -527,6 +527,28 @@ function bookingText(l) {
   return 'нет — только телефон';
 }
 
+// Дата перезвона: «9 окт», «сегодня», «завтра»; просрочка подсвечивается
+function callbackText(day) {
+  if (!day) return 'дата не назначена';
+  const today = CFG.today || new Date().toISOString().slice(0, 10);
+  const diff = Math.round((new Date(day) - new Date(today)) / 86400000);
+  if (diff === 0) return 'сегодня';
+  if (diff === 1) return 'завтра';
+  const d = new Date(day + 'T12:00:00');
+  const text = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace('.', '');
+  return diff < 0 ? `${text}, просрочено` : text;
+}
+function callbackClass(day) {
+  if (!day) return 'cb-none';
+  const today = CFG.today || new Date().toISOString().slice(0, 10);
+  return day < today ? 'cb-late' : day === today ? 'cb-today' : '';
+}
+function addDays(n) {
+  const base = new Date((CFG.today || new Date().toISOString().slice(0, 10)) + 'T12:00:00');
+  base.setDate(base.getDate() + n);
+  return base.toISOString().slice(0, 10);
+}
+
 // «7 окт, 14:32»; год — только если не текущий
 function editedText(iso) {
   if (!iso) return '';
@@ -561,10 +583,11 @@ async function loadLeads() {
       <td>${l.website
             ? `<a class="chip" target="_blank" rel="noopener" href="${esc(l.website)}">сайт ↗</a>`
             : '<span class="chip off">нет</span>'}</td>
-      <td><span class="st ${esc(l.status)}">${esc(CFG.statuses[l.status] || l.status)}${
+      <td><span class="st ${esc(l.status)} ${l.status === 'callback' ? callbackClass(l.callback_at) : ''}">${
+            esc(CFG.statuses[l.status] || l.status)}${
             l.status === 'no_answer' && l.call_count
               ? ` <b class="tries${l.call_count >= 3 ? ' warn' : ''}">(${l.call_count})</b>`
-              : ''}</span></td>
+              : ''}${l.status === 'callback' ? ` · ${esc(callbackText(l.callback_at))}` : ''}</span></td>
     </tr>`).join('');
 
   $('empty').hidden = data.items.length > 0;
@@ -1159,6 +1182,7 @@ async function openLead(id) {
         ${Object.entries(CFG.statuses).map(([k, v]) =>
           `<button data-st="${k}" class="${l.status === k ? 'on' : ''}">${esc(v)}</button>`).join('')}
       </div>
+      <div id="cbBox"></div>
       <div id="callBox">${callBlock(l)}</div>
     </div>
 
@@ -1200,14 +1224,61 @@ async function openLead(id) {
       `}
     </div>`;
 
+  // «Перезвонить»: сначала дата, статус сохраняется вместе с ней. У лида,
+  // который уже ждёт перезвона, тот же блок переносит дату
+  const showCallback = (editing) => {
+    const box = $('cbBox');
+    if (!editing && l.status !== 'callback') { box.innerHTML = ''; return; }
+    const day = l.callback_at || addDays(1);
+    box.innerHTML = l.status === 'callback' && !editing ? `
+      <div class="cbline ${callbackClass(l.callback_at)}">Перезвонить: <b>${esc(callbackText(l.callback_at))}</b>
+        <button class="linkbtn" id="cbMove">${l.callback_at ? 'Перенести' : 'Назначить дату'}</button></div>`
+      : `<div class="cbpick">
+        <div class="cbtitle">Когда перезвонить?</div>
+        <div class="cbrow">
+          <input type="date" id="cbDate" value="${esc(day)}" min="${esc(CFG.today || '')}">
+          <button data-days="1">Завтра</button><button data-days="3">Через 3 дня</button>
+          <button data-days="7">Через неделю</button>
+        </div>
+        <div class="cbrow">
+          <button class="primary" id="cbSave">Сохранить</button>
+          <button id="cbCancel">Отмена</button>
+        </div>
+      </div>`;
+    if ($('cbMove')) $('cbMove').onclick = () => showCallback(true);
+    box.querySelectorAll('[data-days]').forEach((d) => {
+      d.onclick = () => { $('cbDate').value = addDays(Number(d.dataset.days)); };
+    });
+    if ($('cbCancel')) $('cbCancel').onclick = () => showCallback(false);
+    if ($('cbSave')) $('cbSave').onclick = async () => {
+      const value = $('cbDate').value;
+      if (!value) { alert('Выберите дату'); return; }
+      const first = l.status !== 'callback';
+      await api('/api/lead/' + id, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(first ? { status: 'callback', callback_at: value } : { callback_at: value }),
+      });
+      Object.assign(l, await api('/api/lead/' + id));
+      $('drawer').querySelectorAll('[data-st]').forEach((x) => x.classList.toggle('on', x.dataset.st === 'callback'));
+      showCallback(false);
+      $('callBox').innerHTML = callBlock(l);
+      bindCall(id, l);
+      loadLeads(); loadStats(); loadLeadHistory(id);
+    };
+  };
+  showCallback(false);
+
   $('drawer').querySelectorAll('[data-st]').forEach((b) => b.onclick = async () => {
+    if (b.dataset.st === 'callback') { showCallback(true); return; }
     await api('/api/lead/' + id, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: b.dataset.st }),
     });
+    l.status = b.dataset.st;
+    showCallback(false);
     $('drawer').querySelectorAll('[data-st]').forEach((x) => x.classList.remove('on'));
     b.classList.add('on');
-    // «Не дозвонились» и «Связались» сами пишут попытку — счётчик надо
+    // «Не дозвонились» и «Перезвонить» сами пишут попытку — счётчик надо
     // перечитать, иначе блок покажет вчерашние цифры.
     Object.assign(l, await api('/api/lead/' + id));
     $('callBox').innerHTML = callBlock(l);
@@ -1543,6 +1614,7 @@ async function init() {
   $('btnBackup').hidden = !CFG.is_admin;
   for (const [k, v] of Object.entries(CFG.reasons)) $('fReason').add(new Option(v, k));
   for (const [k, v] of Object.entries(CFG.statuses)) $('fStatus').add(new Option(v, k));
+  $('fStatus').add(new Option('Перезвонить: сегодня и просроченные', 'callback_due'));
   $('dadataHint').textContent = CFG.dadata_ready ? '' : '— нужен токен в .env';
   $('optDadata').checked = CFG.dadata_ready;
   $('optDadata').disabled = !CFG.dadata_ready;
