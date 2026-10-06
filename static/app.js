@@ -1965,6 +1965,25 @@ async function init() {
   if (s.running) startPolling();
 }
 
+// Страница взята из старого кеша браузера, а скрипт уже новый: в разметке
+// нет того, к чему скрипт обращается, и запуск падает молча. Перезагрузка
+// заставляет браузер сверить страницу с сервером; хвост «#add=…» при этом
+// сохраняется. Флаг в sessionStorage — чтобы не зациклиться, если дело не в кеше.
+function staleMarkup() {
+  return ['btnQueue', 'queueDialog', 'mergeDialog'].some((id) => !$(id));
+}
+function reloadOnce() {
+  try {
+    if (sessionStorage.getItem('leadgen.reloaded')) return false;
+    sessionStorage.setItem('leadgen.reloaded', '1');
+  } catch (e) { return false; }
+  location.reload();
+  return true;
+}
+
 // Карточка с карт в режиме очереди — не грузим весь интерфейс
 if (location.hash.startsWith('#add=') && mapMode() === 'queue') catchToQueue();
-else init();
+else if (!(staleMarkup() && reloadOnce())) {
+  try { sessionStorage.removeItem('leadgen.reloaded'); } catch (e) { /* нет хранилища */ }
+  init();
+}
