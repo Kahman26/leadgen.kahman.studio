@@ -710,17 +710,30 @@ def _card_duplicate(card):
                                    phones, map_url)
 
 
-@app.post("/api/queue")
-def queue_add(request: Request, payload: dict = Body(...)):
-    """Карточка от кнопки «В leadgen» в режиме очереди. Объект, который
-    уже есть в базе, в очередь не ставим — проверять там нечего."""
-    raw = payload.get("card") or {}
+def _clean_card(raw):
+    """Карточка от кнопки или из формы — только известные поля и разумной длины."""
     card = {k: str(raw.get(k) or "").strip()[:500] for k in CARD_FIELDS}
     card["phones"] = [str(p).strip()[:40] for p in (raw.get("phones") or [])][:8]
     # Без хвоста с координатами — иначе та же карточка встанет в очередь дважды
     card["map_url"] = _map_card(card["map_url"])[0]
     if not card["name"]:
         raise HTTPException(400, "В карточке нет названия")
+    return card
+
+
+@app.put("/api/queue/{item_id}")
+def queue_update(item_id: int, payload: dict = Body(...)):
+    """Карточку из очереди начали править и закрыли окно — правки остаются в очереди."""
+    if not db.queue_update(item_id, _clean_card(payload.get("card") or {})):
+        raise HTTPException(404, "Такой карточки в очереди уже нет")
+    return {"count": db.queue_count()}
+
+
+@app.post("/api/queue")
+def queue_add(request: Request, payload: dict = Body(...)):
+    """Карточка от кнопки «В leadgen» в режиме очереди. Объект, который
+    уже есть в базе, в очередь не ставим — проверять там нечего."""
+    card = _clean_card(payload.get("card") or {})
 
     # Объект уже в базе: в очередь он встаёт на сравнение, если карта
     # принесла что-то новое, — иначе разбирать там нечего

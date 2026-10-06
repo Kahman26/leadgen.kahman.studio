@@ -385,7 +385,8 @@ textarea { width: 100%; min-height: 80px; resize: vertical; }
 .muted { color: var(--muted); }
 .empty { padding: 50px 20px; text-align: center; color: var(--muted); }
 dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); padding: 20px; max-width: 460px; }
-dialog::backdrop { background: rgba(16,24,40,.4); }
+/* Под окном база темнеет и расплывается — не спорит за внимание */
+dialog::backdrop { background: rgba(8, 11, 16, .62); backdrop-filter: blur(3px); }
 label.row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 
 /* ── правка адреса сайта в карточке ─────────────────────────────────────── */
@@ -723,10 +724,38 @@ dialog.queuedlg { max-width: 860px; width: calc(100% - 32px); }
   .qitem { flex-wrap: wrap; }
   .qitem .qbtns { width: 100%; justify-content: flex-end; }
 }
-/* Вкладка, которую открыла кнопка с карт в режиме очереди: одна строка и закрыться */
+/* Вкладка, которую открыла кнопка с карт в режиме очереди: показать итог
+   несколько секунд и закрыться */
 .catch { display: flex; min-height: 100vh; align-items: center; justify-content: center;
-  padding: 16px; text-align: center; font-size: 17px; }
-.catch a { display: inline-block; margin-top: 10px; font-size: 14px; }
+  padding: 16px; }
+.catchcard { position: relative; width: 100%; max-width: 440px; padding: 28px 24px 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow); text-align: center; }
+.catchcard .x { position: absolute; top: 10px; right: 10px; padding: 4px 10px;
+  border: none; background: none; color: var(--muted); font-size: 18px; }
+.catchcard .x:hover { color: var(--ink); }
+.catchicon { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; }
+.catchicon svg { width: 30px; height: 30px; }
+.catchicon.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.catchicon.info { background: var(--accent-soft); color: var(--accent); }
+.catchicon.err { background: color-mix(in srgb, var(--hot) 16%, transparent); color: var(--hot); }
+.catchicon.wait { background: var(--bg); color: var(--muted); }
+.catchtitle { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.catchtext { margin-top: 6px; color: var(--muted); font-size: 14px; }
+.catchbar { margin-top: 18px; height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.catchbar i { display: block; height: 100%; width: 100%; background: var(--ok);
+  transform-origin: left; }
+.catchbar i.run { animation: catchbar linear forwards; }
+@keyframes catchbar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.catchfoot { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.catchfoot a { margin-left: 6px; }
+@media (prefers-reduced-motion: reduce) { .catchbar i.run { animation: none; } }
+
+/* Короткое сообщение внизу экрана */
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 10px; font-size: 14px;
+  background: var(--ink); color: var(--panel); box-shadow: var(--shadow); }
 
 /* ── объект с карт уже в базе: сравнение ────────────────────────────────── */
 dialog.mergedlg { max-width: 860px; width: calc(100% - 32px); }

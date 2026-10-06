@@ -888,6 +888,14 @@ def queue_count() -> int:
     return conn().execute("SELECT COUNT(*) FROM map_queue").fetchone()[0]
 
 
+def queue_update(item_id: int, card: dict) -> bool:
+    c = conn()
+    cur = c.execute("UPDATE map_queue SET card=? WHERE id=?",
+                    (json.dumps(card, ensure_ascii=False), item_id))
+    c.commit()
+    return cur.rowcount > 0
+
+
 def queue_delete(item_id: int) -> None:
     c = conn()
     c.execute("DELETE FROM map_queue WHERE id=?", (item_id,))

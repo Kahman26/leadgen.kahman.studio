@@ -321,18 +321,67 @@ function setMapMode(mode) {
 }
 
 // Вкладка, открытая кнопкой с карт в режиме очереди. Весь интерфейс ей не
-// нужен: поставить карточку в очередь, показать одну строку и закрыться —
-// браузер вернёт человека на вкладку с картой.
+// нужен: поставить карточку в очередь, показать итог пять секунд и
+// закрыться — браузер вернёт человека на вкладку с картой. Закрыть раньше —
+// крестик или Esc.
+const CATCH_SECONDS = 5;
+const ICONS = {
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 11v6M12 7.2v.1"/></svg>',
+  err: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg>',
+  wait: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6v6l4 2"/></svg>',
+};
+
 async function catchToQueue() {
   let card = null;
   try { card = JSON.parse(decodeURIComponent(location.hash.slice(5))); } catch (e) { /* битая */ }
   history.replaceState(null, '', location.pathname + location.search);
   document.title = 'В очередь — сборщик лидов';
-  document.body.innerHTML = '<div class="catch"><div id="catchMsg">Ставлю в очередь…</div></div>';
-  const msg = $('catchMsg');
-  const tail = '<br><a href="/#queue">Открыть очередь</a>';
+  document.body.innerHTML = `<div class="catch"><div class="catchcard">
+    <button class="x" id="catchClose" title="Закрыть (Esc)" aria-label="Закрыть">✕</button>
+    <div class="catchicon wait" id="catchIcon">${ICONS.wait}</div>
+    <div class="catchtitle" id="catchTitle">Ставлю в очередь…</div>
+    <div class="catchtext" id="catchText"></div>
+    <div class="catchbar" id="catchBar" hidden><i></i></div>
+    <div class="catchfoot" id="catchFoot"><a href="/#queue">Открыть очередь</a></div>
+  </div></div>`;
+
+  let timer = null;
+  const close = () => {
+    clearInterval(timer);
+    window.close();
+    // Закрыть можно только вкладку, которую открыл скрипт, — кнопка так и
+    // делает. Если браузер всё же не дал, говорим об этом
+    $('catchBar').hidden = true;
+    $('catchFoot').innerHTML = 'Вкладку можно закрыть. <a href="/#queue">Открыть очередь</a>';
+  };
+  $('catchClose').onclick = close;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+  const show = (kind, title, text, autoClose) => {
+    $('catchIcon').className = 'catchicon ' + kind;
+    $('catchIcon').innerHTML = ICONS[kind];
+    $('catchTitle').innerHTML = title;
+    $('catchText').innerHTML = text;
+    if (!autoClose) return;
+    const bar = $('catchBar');
+    bar.hidden = false;
+    bar.firstElementChild.style.animationDuration = CATCH_SECONDS + 's';
+    bar.firstElementChild.classList.add('run');
+    let left = CATCH_SECONDS;
+    const foot = () => {
+      $('catchFoot').innerHTML = `Закроется через ${left} с · Esc — закрыть сейчас
+        <a href="/#queue">Открыть очередь</a>`;
+    };
+    foot();
+    timer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) close(); else foot();
+    }, 1000);
+  };
+
   if (!card || typeof card !== 'object') {
-    msg.innerHTML = 'Не получилось прочитать карточку. Нажмите кнопку на карте ещё раз.' + tail;
+    show('err', 'Не получилось прочитать карточку', 'Нажмите кнопку на карте ещё раз.', false);
     return;
   }
   let r;
@@ -342,23 +391,48 @@ async function catchToQueue() {
       body: JSON.stringify({ card }),
     });
   } catch (e) {
-    msg.innerHTML = `Не поставил в очередь: ${esc(e.message)}` + tail;
+    show('err', 'Не поставил в очередь', esc(e.message), false);
     return;
   }
-  const text = {
-    added: `✓ «${esc(card.name)}» в очереди. Всего: ${r.count}`,
-    queued: `«${esc(card.name)}» уже ждёт в очереди. Всего: ${r.count}`,
-    update: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}» — на карте новые данные,
-      поставил в очередь на сравнение. Всего: ${r.count}`,
-    same: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}», новых данных на карте нет`,
+  const name = `«${esc(card.name)}»`;
+  const total = `Всего в очереди: ${r.count}`;
+  const view = {
+    added: ['ok', `${name} в очереди`, total],
+    queued: ['info', `${name} уже ждёт в очереди`, total],
+    update: ['info', `${name} уже есть в базе`,
+      `Как «${esc(r.lead)}». На карте новые данные — поставил в очередь на сравнение. ${total}`],
+    same: ['info', `${name} уже есть в базе`, `Как «${esc(r.lead)}». Новых данных на карте нет.`],
   }[r.status];
-  msg.innerHTML = text;
-  // Закрыть можно только вкладку, которую открыл скрипт, — кнопка так и делает.
-  // Если браузер не дал, оставляем ссылку на очередь.
-  setTimeout(() => {
-    window.close();
-    msg.innerHTML = text + '<br><span class="muted" style="font-size:14px">Вкладку можно закрыть.</span>' + tail;
-  }, ['same', 'update'].includes(r.status) ? 2500 : 900);
+  show(view[0], view[1], view[2], true);
+}
+
+// Короткое сообщение внизу экрана
+let toastTimer = null;
+function toast(text) {
+  const t = $('toast');
+  if (!t) return;
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+}
+
+// Окно закрывается кликом мимо него. Нажатие и отпускание должны быть оба
+// снаружи: иначе выделение текста, начатое в поле и отпущенное за краем,
+// закрывало бы форму. onDismiss — что сделать вместо простого закрытия;
+// тот же путь у Esc.
+function dismissable(dlg, onDismiss = () => dlg.close()) {
+  const outside = (e) => {
+    const r = dlg.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  let downOutside = false;
+  dlg.addEventListener('mousedown', (e) => { downOutside = e.target === dlg && outside(e); });
+  dlg.addEventListener('click', (e) => {
+    if (downOutside && e.target === dlg && outside(e)) onDismiss();
+    downOutside = false;
+  });
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); onDismiss(); });
 }
 
 // То, что уходит на сервер: номер выбранного или название нового
@@ -1802,6 +1876,53 @@ async function init() {
     $('mergeGo').textContent = 'Сохранить';
   };
 
+  // ── клик мимо окна ─────────────────────────────────────────────────
+  // Форму с данными с карт закрыли не глядя — данные не теряем, а
+  // кладём в очередь: оттуда её можно спокойно разобрать позже
+  const formCard = () => ({
+    name: $('addName').value.trim(), website: $('addSite').value,
+    phones: $('addPhone').value.split(/[,;]/).map((p) => p.trim()).filter(Boolean),
+    telegram: $('addTg').value, vk: $('addVk').value, whatsapp: $('addWa').value,
+    email: $('addEmail').value, address: $('addAddr').value, map_url: addMapUrl,
+    source: lastCard ? lastCard.source : 'manual', rubric: lastCard ? lastCard.rubric : '',
+  });
+  const toQueue = async (card, queueId) => {
+    try {
+      if (queueId) {
+        await api(`/api/queue/${queueId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ card }),
+        });
+        toast('Правки сохранены в очереди');
+      } else {
+        const r = await api('/api/queue', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ card }),
+        });
+        toast({
+          added: 'Карточка сохранена в очереди с карт',
+          queued: 'Эта карточка уже ждёт в очереди',
+          update: 'Сохранено в очереди на сравнение',
+          same: `Уже есть в базе как «${r.lead}», новых данных нет`,
+        }[r.status]);
+      }
+      loadQueueCount();
+    } catch (e) { toast('Не сохранил в очередь: ' + e.message); }
+  };
+
+  dismissable($('addDialog'), () => {
+    $('addDialog').close();
+    const card = formCard();
+    if (card.name) toQueue(card, addQueueId);   // пустую форму сохранять незачем
+  });
+  dismissable($('mergeDialog'), () => {
+    $('mergeDialog').close();
+    if (merge && merge.queueId) return;   // она и так в очереди
+    if (merge && merge.diff.news) toQueue(merge.card, null);
+  });
+  dismissable($('queueDialog'));
+  dismissable($('runDialog'));
+
   // Карточка, пришедшая в адресе после «#add=», — когда всё выше уже объявлено
   takeCard();
   window.addEventListener('hashchange', takeCard);
@@ -1830,7 +1951,10 @@ async function init() {
     $('queueSaveAll').disabled = !queueItems.some((i) => !i.duplicate && i.guess);
     if (!queueItems.length) {
       $('queueList').innerHTML = `<div class="empty" style="padding:30px 10px">Очередь пуста.
-        ${mapMode() === 'queue' ? 'Нажимайте «В leadgen» на карточках в Яндекс Картах или 2ГИС.' : ''}</div>`;
+        ${mapMode() === 'queue'
+          ? 'Нажимайте «В leadgen» на карточках в Яндекс Картах или 2ГИС.'
+          : 'Чтобы кнопка «В leadgen» копила карточки здесь, включите очередь на странице '
+            + '<a href="/bookmarklet">«Кнопка для карт»</a>.'}</div>`;
       return;
     }
     $('queueList').innerHTML = '<div class="qlist">' + queueItems.map((it) => {
@@ -1857,7 +1981,6 @@ async function init() {
   };
 
   const openQueue = async () => {
-    $('queueMode').checked = mapMode() === 'queue';
     $('queueErr').classList.remove('on');
     $('queueList').innerHTML = '<div class="empty" style="padding:30px 10px">Загружаю…</div>';
     if (!$('queueDialog').open) $('queueDialog').showModal();
@@ -1873,10 +1996,6 @@ async function init() {
 
   $('btnQueue').onclick = openQueue;
   $('queueClose').onclick = () => $('queueDialog').close();
-  $('queueMode').onchange = () => {
-    setMapMode($('queueMode').checked ? 'queue' : 'form');
-    showQueueCount(queueItems.length);
-  };
 
   $('queueList').onclick = async (e) => {
     const row = e.target.closest('.qitem');
