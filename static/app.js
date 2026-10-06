@@ -479,6 +479,18 @@ function contactChips(l) {
                     : '<span class="chip off">нет контактов</span>';
 }
 
+// Площадки, где объект есть, но которые не его сайт
+const KIND_RU = { booking: 'бронирование', classifieds: 'объявления', catalog: 'каталог',
+  gifts: 'подарки', page: 'визитка', social: 'соцсеть' };
+function platformsBlock(l) {
+  const items = l.aggregators || [];
+  if (!items.length) return '';
+  return `<div class="platforms"><span class="muted">${l.website ? 'Ещё продаёт через' : 'Своего сайта нет, есть на'}:</span>
+    ${items.map((p) => `<a class="chip plat" target="_blank" rel="noopener" href="${esc(p.url)}"
+      title="${esc((KIND_RU[p.kind] || p.kind) + (p.source ? ' · откуда: ' + p.source : ''))}">${
+      esc(p.name)} ↗</a>`).join('')}</div>`;
+}
+
 // Данные с карт, которые не совпали с базой: лежат рядом с основными,
 // пока человек не решит — сделать основными или убрать
 const ALT_LABELS = { name: 'Название', website: 'Сайт', address: 'Адрес', telegram: 'Telegram',
@@ -514,7 +526,8 @@ function bookingText(l) {
 // «7 окт, 14:32»; год — только если не текущий
 function editedText(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
+  // Сервер живёт в UTC; время без пояса — тоже UTC, а не местное
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z');
   if (Number.isNaN(d.getTime())) return '';
   const now = new Date();
   const date = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short',
@@ -1054,6 +1067,7 @@ async function openLead(id) {
         ? `<div class="muted" style="margin-top:6px">Ещё номера: ${l.phones.slice(1).map((p) =>
             ((((l.map_alt || {}).phones || {}).value || []).includes(p)
               ? `${esc(p)} <span class="maptag">с карт</span>` : esc(p))).join(', ')}</div>` : ''}
+      ${platformsBlock(l)}
       ${mapAltBlock(l)}
       ${cs.length ? `<div class="muted" style="margin-top:6px">Откуда контакт:
         ${cs.map(([k, v]) => `${esc(k)} — ${esc(v)}`).join(', ')}</div>` : ''}
@@ -1679,6 +1693,7 @@ async function init() {
   let addMapUrl = '';        // ссылка на карточку, если форму заполнили с карт
   let addQueueId = null;     // номер в очереди с карт, если форму открыли оттуда
   let addForce = false;      // человек решил, что найденный «двойник» — другой объект
+  let addLinks = [];         // все внешние ссылки с карточки на карте
 
   // card — то, что прислала кнопка «В leadgen» с Яндекс Карт или 2ГИС
   const openAdd = (card, queueId = null, force = false) => {
@@ -1687,6 +1702,7 @@ async function init() {
     addQueueId = queueId;
     addForce = force;
     lastCard = card;
+    addLinks = (card && card.links) || [];
     // Объект по умолчанию ложится в ту нишу, что открыта сейчас
     let niche = currentNiche || NICHES.default_id;
     let cat = '';
@@ -1767,6 +1783,7 @@ async function init() {
           note: $('addNote').value,
           queue_id: addQueueId,
           force: addForce,
+          links: addLinks,
           ...picked,
         }),
       });
@@ -1785,6 +1802,7 @@ async function init() {
           telegram: $('addTg').value, vk: $('addVk').value, whatsapp: $('addWa').value,
           email: $('addEmail').value, address: $('addAddr').value, map_url: addMapUrl,
           source: lastCard ? lastCard.source : 'manual', rubric: lastCard ? lastCard.rubric : '',
+          links: addLinks,
         };
         const m = await api('/api/lead-match', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1854,7 +1872,13 @@ async function init() {
         <div class="mval"><span class="mcap">с карт</span>${d.phones_new.map(esc).join(', ')}</div>
         <div class="mact"><label class="mpick"><input type="checkbox" id="mergePhones" checked> добавить</label></div>
       </div>` : '';
-    $('mergeRows').innerHTML = `<div class="mgrid">${d.rows.map(row).join('')}${phones}</div>`;
+    const plats = (d.platforms_new || []).length ? `<div class="mrow m-fill">
+        <div class="mlabel">Площадки</div>
+        <div class="mval"><span class="mcap">в базе</span>${esc((d.platforms_base || []).map((p) => p.name).join(', ')) || '<span class="muted">—</span>'}</div>
+        <div class="mval"><span class="mcap">с карт</span>${esc(d.platforms_new.map((p) => p.name).join(', '))}</div>
+        <div class="mact"><label class="mpick"><input type="checkbox" id="mergePlats" checked> добавить</label></div>
+      </div>` : '';
+    $('mergeRows').innerHTML = `<div class="mgrid">${d.rows.map(row).join('')}${phones}${plats}</div>`;
     $('mergeGo').disabled = !d.news;
     $('mergeErr').classList.remove('on');
     $('mergeDialog').showModal();
@@ -1883,6 +1907,7 @@ async function init() {
         body: JSON.stringify({
           card: merge.card, choices, queue_id: merge.queueId,
           add_phones: $('mergePhones') ? $('mergePhones').checked : false,
+          add_platforms: $('mergePlats') ? $('mergePlats').checked : false,
         }),
       });
       $('mergeDialog').close();
@@ -1906,6 +1931,7 @@ async function init() {
     telegram: $('addTg').value, vk: $('addVk').value, whatsapp: $('addWa').value,
     email: $('addEmail').value, address: $('addAddr').value, map_url: addMapUrl,
     source: lastCard ? lastCard.source : 'manual', rubric: lastCard ? lastCard.rubric : '',
+    links: addLinks,
   });
   const toQueue = async (card, queueId) => {
     try {

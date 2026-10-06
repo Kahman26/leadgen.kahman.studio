@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 
 import config
 import utils
+from enrich import aggregators
 
 # ── Движки онлайн-бронирования (главный признак ниши) ────────────────────────
 BOOKING_ENGINES = {
@@ -422,6 +423,7 @@ def audit(url):
         "online_booking": 0, "booking_type": "none", "booking_engine": "",
         "cms": "", "copyright_year": 0, "parked_reason": "",
         "load_ms": None, "final_url": "", "contacts": {}, "error": "",
+        "aggregators": [],
     }
     url = normalize_url(url)
     if not url:
@@ -490,6 +492,15 @@ def audit(url):
         return res
 
     res["site_status"] = "ok"
+
+    # Ссылки на площадки продаж: «мы на Островке», кнопка «купить сертификат
+    # на F911». Свой сайт есть, но часть гостей уходит через посредника
+    found = {}
+    for a in soup.find_all("a", href=True):
+        m = aggregators.match(urljoin(resp.url, a["href"]))
+        if m and m["kind"] in aggregators.SITE_LINK_KINDS and m["name"] not in found:
+            found[m["name"]] = dict(m, source="сайт")   # одна запись на площадку
+    res["aggregators"] = list(found.values())[:12]
 
     # Адаптивность: без viewport сайт на телефоне — уменьшенный десктоп.
     vp = soup.find("meta", attrs={"name": re.compile("^viewport$", re.I)})

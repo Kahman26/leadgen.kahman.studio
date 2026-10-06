@@ -20,6 +20,7 @@ import config
 import db
 import history
 import mapmerge
+from enrich import aggregators
 import metrics
 import niche_rules
 import niches
@@ -31,6 +32,8 @@ from enrich import research_brief
 
 app = FastAPI(title="Сборщик лидов", docs_url=None, redoc_url=None)
 db.init()
+# Площадки, записанные в «сайт» раньше, чем сервис научился их отличать
+pipeline.move_platform_sites()
 auth.cleanup_sessions()
 # Вечерняя резервная копия: снимок базы и выгрузка в Google Таблицу
 backup.start()
@@ -252,6 +255,8 @@ def _where(reason, status, category, q, has, source, hidden="", org="",
         sql.append("COALESCE(telegram,'') <> ''")
     elif has == "vk":
         sql.append("COALESCE(vk,'') <> ''")
+    elif has == "aggregator":
+        sql.append("COALESCE(aggregators,'') NOT IN ('', '[]')")
     elif has == "none":
         sql.append("COALESCE(phone,'')='' AND COALESCE(telegram,'')='' "
                    "AND COALESCE(vk,'')='' AND COALESCE(whatsapp,'')=''")
@@ -717,6 +722,8 @@ def _clean_card(raw):
     """Карточка от кнопки или из формы — только известные поля и разумной длины."""
     card = {k: str(raw.get(k) or "").strip()[:500] for k in CARD_FIELDS}
     card["phones"] = [str(p).strip()[:40] for p in (raw.get("phones") or [])][:8]
+    # Все внешние ссылки с карточки на карте: среди них бывают площадки
+    card["links"] = [str(u).strip()[:500] for u in (raw.get("links") or [])][:12]
     # Без хвоста с координатами — иначе та же карточка встанет в очередь дважды
     card["map_url"] = _map_card(card["map_url"])[0]
     if not card["name"]:
@@ -789,7 +796,8 @@ def lead_merge(request: Request, lead_id: int, payload: dict = Body(...)):
     choices = {k: v for k, v in (payload.get("choices") or {}).items()
                if v in ("fill", "alt", "replace", "skip")}
     site, old_site = mapmerge.apply(lead_id, card, choices,
-                                    bool(payload.get("add_phones")), request.state.login)
+                                    bool(payload.get("add_phones")), request.state.login,
+                                    add_platforms=payload.get("add_platforms", True))
     if card.get("rubric"):
         row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
         where = "2ГИС" if card.get("source") == "2gis" else "Яндекс Картах"
@@ -841,6 +849,11 @@ def create_lead(request: Request, payload: dict = Body(...)):
     phones = utils.split_phones(payload.get("phone") or "")
     map_url, map_source = _map_card(payload.get("map_url"))
 
+    # Страница площадки вместо сайта и ссылки с карточки на карте: что из
+    # этого свой сайт, а что — Островок, каталог саун или магазин подарков
+    links = [str(u) for u in (payload.get("links") or [])][:12]
+    website, platforms = aggregators.split(website, links, source=map_source or "вручную")
+
     # force — человек посмотрел найденного «двойника» и решил, что это другой объект
     dup = None if payload.get("force") else pipeline.find_duplicate(name, website, phones, map_url)
     if dup:
@@ -858,6 +871,7 @@ def create_lead(request: Request, payload: dict = Body(...)):
         "source_detail": f"{map_source}, добавлен вручную" if map_source else "Добавлен вручную",
         "map_url": map_url,
         "website": website,
+        "aggregators": platforms,
         # Адрес вписан руками — сбор не должен его переписывать
         "website_manual": 1 if website else 0,
         "phone": phones[0] if phones else "",

@@ -13,7 +13,7 @@ import history
 import niche_rules
 import scoring
 import utils
-from enrich import dadata_lookup, site_audit, whois_check
+from enrich import aggregators, dadata_lookup, site_audit, whois_check
 from sources import dadata, overpass, registry
 
 # ── состояние запуска для веб-интерфейса ─────────────────────────────────────
@@ -207,7 +207,12 @@ def process_lead(lead, do_whois=False, do_dadata=False):
     if do_dadata:
         enrich_from_egrul(lead)
 
+    # Страница площадки в поле «сайт» — не сайт объекта: уводим её в площадки
+    split_platform_site(lead)
     audit = site_audit.audit(lead.get("website", ""))
+    if audit["site_status"] == "ok":
+        lead["aggregators"] = aggregators.merge(lead.get("aggregators"), audit["aggregators"],
+                                                replace_source="сайт")
 
     contacts = audit.get("contacts") or {}
     src = dict(lead.get("contact_source") or {})
@@ -249,9 +254,69 @@ def process_lead(lead, do_whois=False, do_dadata=False):
         "missing": json.dumps(missing, ensure_ascii=False),
         "phones": json.dumps(lead["phones"], ensure_ascii=False),
         "contact_source": json.dumps(src, ensure_ascii=False),
+        "aggregators": json.dumps(aggregators.as_list(lead.get("aggregators")),
+                                  ensure_ascii=False),
         "checked_at": db.now(),
     })
     return lead
+
+
+PLATFORM_SOURCE = {"osm": "OSM", "dadata": "ЕГРЮЛ", "registry": "реестр", "manual": "вручную"}
+
+
+def split_platform_site(lead):
+    """Если в поле «сайт» стоит площадка — переносит её в список площадок."""
+    site = lead.get("website") or ""
+    own, found = aggregators.split(site, source=PLATFORM_SOURCE.get(lead.get("source"), "сбор"))
+    if site and aggregators.match(site):
+        lead["website"] = own
+        lead["aggregators"] = aggregators.merge(lead.get("aggregators"), found)
+        # Контакты «с сайта» сняты со страницы площадки — это её телефон и её
+        # ВКонтакте, а не объекта. Звонить туда незачем
+        src = lead.get("contact_source") or {}
+        if isinstance(src, str):
+            src = json.loads(src or "{}")
+        for field in ("phone", "telegram", "vk", "whatsapp", "email"):
+            if src.get(field) == "сайт":
+                lead[field] = ""
+                src.pop(field)
+        lead["contact_source"] = src
+        lead["phones"] = [lead["phone"]] if lead.get("phone") else []
+        # Страница ВКонтакте вместо сайта — заодно и контакт
+        vk = re.search(r"vk\.(?:com|ru|link)/([A-Za-z0-9_.]+)", site)
+        if vk and not lead.get("vk"):
+            lead["vk"] = vk.group(1)
+        return True
+    return False
+
+
+def move_platform_sites():
+    """Разовая чистка: площадки, записанные в поле «сайт» до того, как
+    сервис научился их отличать. Повторный запуск ничего не делает."""
+    c = db.conn()
+    moved = 0
+    for row in c.execute("SELECT * FROM leads WHERE COALESCE(website,'') <> ''").fetchall():
+        if not aggregators.match(row["website"]):
+            continue
+        lead = db.row_to_dict(row)
+        split_platform_site(lead)
+        c.execute(
+            "UPDATE leads SET website=?, aggregators=?, phone=?, phones=?, telegram=?, vk=?, "
+            "whatsapp=?, email=?, contact_source=?, site_status='none', final_url='', "
+            "http_code=NULL, https=0, mobile_ready=0, online_booking=0, booking_type='none', "
+            "booking_engine='', cms='', copyright_year=NULL, load_ms=NULL, parked_reason='' "
+            "WHERE id=?",
+            (lead["website"], json.dumps(lead["aggregators"], ensure_ascii=False),
+             lead.get("phone") or "", json.dumps(lead["phones"], ensure_ascii=False),
+             lead.get("telegram") or "", lead.get("vk") or "", lead.get("whatsapp") or "",
+             lead.get("email") or "", json.dumps(lead["contact_source"], ensure_ascii=False),
+             row["id"]))
+        c.commit()
+        history.log(history.SYSTEM, "edit", lead=row, field="website",
+                    old=row["website"], new="")
+        rescore_one(row["id"])
+        moved += 1
+    return moved
 
 
 # ── полный прогон ────────────────────────────────────────────────────────────

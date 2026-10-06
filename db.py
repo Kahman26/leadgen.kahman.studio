@@ -404,6 +404,9 @@ MIGRATIONS = [
     # Когда объект последний раз трогал человек: правка, слияние с картами,
     # статус, заметка. Ставит журнал; сбор и перепроверка его не двигают
     ("edited_at", "TEXT DEFAULT ''"),
+    # Площадки, где объект есть, но которые не его сайт (enrich/aggregators.py):
+    # [{name, kind, url, source}]
+    ("aggregators", "TEXT DEFAULT ''"),
 ]
 
 
@@ -422,7 +425,7 @@ def init():
     # Для объектов, которых трогали до появления колонки, — время из журнала
     c.execute("""
         UPDATE leads SET edited_at = (
-            SELECT strftime('%Y-%m-%dT%H:%M:%S', MAX(h.ts), 'unixepoch', 'localtime')
+            SELECT strftime('%Y-%m-%dT%H:%M:%SZ', MAX(h.ts), 'unixepoch')
             FROM history h WHERE h.lead_id = leads.id AND h.login <> '@system')
         WHERE COALESCE(edited_at, '') = ''
           AND EXISTS (SELECT 1 FROM history h WHERE h.lead_id = leads.id AND h.login <> '@system')
@@ -479,6 +482,7 @@ UPSERT_FIELDS = [
     "online_booking", "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
     "domain_expires", "domain_age_days",
     "reason_code", "reason_text", "missing", "pitch", "score", "checked_at",
+    "aggregators",
 ]
 
 
@@ -503,6 +507,13 @@ def upsert(lead: dict) -> str:
     niches.apply(c, lead, row)
 
     if row:
+        # Площадки, добавленные с карт или руками, сбор не стирает: он знает
+        # только свои. Записи «с сайта» — заменяет свежими
+        if "aggregators" in lead:
+            from enrich import aggregators
+            lead["aggregators"] = json.dumps(aggregators.merge(
+                aggregators.merge(row["aggregators"], [], replace_source="сайт"),
+                lead["aggregators"]), ensure_ascii=False)
         fields = [f for f in UPSERT_FIELDS if f in lead]
         # Всё, что человек исправил руками, сбор перезаписывать не должен:
         # иначе следующий прогон вернёт мёртвую ссылку или чужой телефон.
@@ -569,6 +580,10 @@ def row_to_dict(r: sqlite3.Row) -> dict:
         d["map_alt"] = json.loads(d.get("map_alt") or "{}")
     except (ValueError, TypeError):
         d["map_alt"] = {}
+    try:
+        d["aggregators"] = json.loads(d.get("aggregators") or "[]")
+    except (ValueError, TypeError):
+        d["aggregators"] = []
     for f in ("phones", "missing", "contact_source"):
         if d.get(f):
             try:

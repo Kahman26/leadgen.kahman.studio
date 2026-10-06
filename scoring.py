@@ -9,6 +9,7 @@ from datetime import datetime
 
 import config
 import niche_rules
+from enrich import aggregators
 from enrich.site_audit import CHEAP_BUILDERS
 
 SLOW_MS = 3000
@@ -18,6 +19,7 @@ SLOW_MS = 3000
 REASONS = {
     "SITE_DEAD":     ("Сайт не открывается",        100, 55),
     "SITE_PARKED":   ("На домене нет сайта",          95, 52),
+    "AGGREGATOR_ONLY": ("Сайт только на агрегаторе", 92, 55),
     "NO_SITE":       ("Нет сайта",                   90, 50),
     "NO_MOBILE":     ("Нет мобильной версии",        80, 30),
     "CHEAP_BUILDER": ("Сайт на дешёвом конструкторе", 70, 18),
@@ -77,6 +79,30 @@ def _pitch_general(code, lead, audit):
     return None
 
 
+def _pitch_platform(lead):
+    """Своего сайта нет, есть только страница на чужой площадке."""
+    name = lead.get("name") or "вас"
+    plats = [p for p in aggregators.as_list(lead.get("aggregators"))
+             if p.get("kind") != "social"]
+    where = ", ".join(dict.fromkeys(p.get("name") for p in plats)) or "площадке"
+    kinds = {p.get("kind") for p in plats}
+    if "gifts" in kinds:
+        return (f"«{name}» продаётся через {where} — сертификат покупают с наценкой "
+                f"площадки, а деньги приходят к вам позже и за вычетом комиссии. Свой "
+                f"сайт с бронью и сертификатами забирает эти продажи напрямую.")
+    if kinds & {"booking", "classifieds"}:
+        return (f"Своего сайта у «{name}» нет — гости находят вас только через {where}, "
+                f"и с каждой брони площадка берёт 15–20% комиссии. Свой сайт с прямым "
+                f"бронированием окупается за несколько заездов.")
+    if "catalog" in kinds:
+        return (f"Вместо сайта у «{name}» — страница в каталоге {where}. Гость видит вас "
+                f"в одном списке с конкурентами и выбирает того, у кого есть свой сайт "
+                f"с ценами, фото и бронью.")
+    return (f"Вместо сайта у «{name}» — {where[:1].lower() + where[1:]}. Это визитка, "
+            f"а не сайт: нет цен, бронирования и места в поиске. Гость уходит к тем, "
+            f"у кого всё это есть.")
+
+
 def _pitch(code, lead, audit):
     """С чего начать разговор. Проблема клиента, а не наш оффер."""
     name = lead.get("name") or "вас"
@@ -92,6 +118,8 @@ def _pitch(code, lead, audit):
     if code == "LIQUIDATED":
         return (f"По ЕГРЮЛ организация ликвидирована — звонить некуда. "
                 f"Стоит скрыть лид, чтобы он не мешал в работе.")
+    if code == "AGGREGATOR_ONLY":
+        return _pitch_platform(lead)
     if code == "NO_SITE":
         return (f"У «{name}» нет своего сайта — значит все брони идут через Суточно, "
                 f"Авито и Островок, а это 15–20% комиссии с каждой. Свой сайт с прямым "
@@ -155,8 +183,14 @@ def score_lead(lead, audit):
 
     status = audit.get("site_status")
     has_site = bool((lead.get("website") or "").strip())
+    platforms = aggregators.as_list(lead.get("aggregators"))
+    selling = [p for p in platforms if p.get("kind") in aggregators.SALES_KINDS | {"page"}]
 
-    if status == "none" or not has_site:
+    if (status == "none" or not has_site) and selling:
+        problems.append("AGGREGATOR_ONLY")
+        missing.append(f"Своего сайта нет — только страницы на площадках: "
+                       f"{aggregators.names(selling)}")
+    elif status == "none" or not has_site:
         problems.append("NO_SITE")
         missing.append("Сайта нет вообще")
     elif status == "dead":
@@ -222,6 +256,11 @@ def score_lead(lead, audit):
         missing.append(f"Возможно ликвидирована: в реестре {lead.get('org_name')} "
                        f"числится закрытой, но совпадение неточное — проверьте")
 
+    # Свой сайт есть, но продаёт и через посредников — комиссия с каждой брони
+    side = [p for p in platforms if p.get("kind") in aggregators.SALES_KINDS]
+    if has_site and side and "AGGREGATOR_ONLY" not in problems:
+        missing.append(f"Продаёт и через площадки: {aggregators.names(side)}")
+
     if not problems:
         problems.append("OK")
 
@@ -230,6 +269,8 @@ def score_lead(lead, audit):
     reason_text = REASONS[code][0]
 
     score = sum(REASONS[p][2] for p in problems)
+    if has_site and side and "AGGREGATOR_ONLY" not in problems:
+        score += 5
 
     # Лид без контактов маркетологу бесполезен, каким бы плохим ни был сайт.
     contacts = [lead.get("phone"), lead.get("telegram"), lead.get("vk"),

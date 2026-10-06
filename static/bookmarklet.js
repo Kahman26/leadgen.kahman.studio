@@ -14,7 +14,7 @@
    комментарии здесь только блочные: строчные при сборке не вырезаются. */
 (function (ORIGIN) {
   var out = { name: '', phones: [], website: '', address: '', telegram: '', vk: '',
-              whatsapp: '', email: '', rubric: '', source: '', map_url: '' };
+              whatsapp: '', email: '', rubric: '', source: '', map_url: '', links: [] };
   var clean = function (s) { return String(s || '').replace(/\s+/g, ' ').trim(); };
   var push = function (list, v) { v = clean(v); if (v && list.indexOf(v) < 0) list.push(v); };
 
@@ -32,12 +32,16 @@
       if (!out.whatsapp && n) out.whatsapp = '+' + n;
     } else if (/(^|\.)(ok\.ru|instagram\.com|youtube\.com|youtu\.be|dzen\.ru|max\.ru|viber\.com|facebook\.com|rutube\.ru)$/.test(h)) {
       /* соцсети, для которых в leadgen нет поля */
-    } else if (!out.website && !/(^|\.)(yandex|2gis)\./.test(h)) {
+    } else if (!/(^|\.)(yandex|2gis)\./.test(h)) {
       /* Метки рекламы и счётчиков: без них адрес годится для поиска дублей */
       Array.from(u.searchParams.keys()).forEach(function (k) {
         if (/^(utm_|yclid$|ysclid$|gclid$|fbclid$|_openstat$|from$)/.test(k)) u.searchParams.delete(k);
       });
-      out.website = u.origin + (u.pathname === '/' && !u.search ? '' : u.pathname + u.search);
+      var addr = u.origin + (u.pathname === '/' && !u.search ? '' : u.pathname + u.search);
+      /* Все ссылки отдаём leadgen: какие из них свой сайт, а какие Островок
+         или каталог саун, он разберёт сам */
+      if (out.links.indexOf(addr) < 0) out.links.push(addr);
+      if (!out.website) out.website = addr;
     }
   };
 

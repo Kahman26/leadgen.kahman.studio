@@ -20,6 +20,7 @@ import db
 import history
 import pipeline
 import utils
+from enrich import aggregators
 
 FIELDS = (
     ("name", "Название"),
@@ -52,9 +53,13 @@ def card_values(card):
     vk = (card.get("vk") or "").strip().rstrip("/").split("/")[-1]
     wa = utils.split_phones(card.get("whatsapp") or "")
     site = utils.decode_idna((card.get("website") or "").strip())
+    # Страница площадки — не сайт: уходит в список площадок
+    site, platforms = aggregators.split(site if utils.looks_like_url(site) else "",
+                                        card.get("links") or [], source=source_title(card))
     return {
         "name": re.sub(r"\s+", " ", card.get("name") or "").strip(),
-        "website": site if utils.looks_like_url(site) else "",
+        "website": site,
+        "aggregators": platforms,
         "address": re.sub(r"\s+", " ", card.get("address") or "").strip(),
         "telegram": tg,
         "vk": vk,
@@ -119,12 +124,16 @@ def diff(lead, card):
 
     known = _known_phones(lead)
     phones_new = [p for p in vals["phones"] if p not in known]
-    news = sum(1 for r in rows if r["kind"] in ("fill", "conflict")) + len(phones_new)
+    had = aggregators.as_list(lead.get("aggregators"))
+    plats_new = aggregators.merge(had, vals["aggregators"])[len(had):]
+    news = (sum(1 for r in rows if r["kind"] in ("fill", "conflict")) + len(phones_new)
+            + len(plats_new))
     return {"rows": rows, "phones_new": phones_new, "phones_card": vals["phones"],
+            "platforms_new": plats_new, "platforms_base": had,
             "source": source_title(card), "news": news}
 
 
-def apply(lead_id, card, choices, add_phones, login):
+def apply(lead_id, card, choices, add_phones, login, add_platforms=True):
     """Записывает выбор человека. choices: поле → fill | alt | replace | skip.
 
     Возвращает (новый адрес сайта или None, прежний адрес) — если сайт
@@ -176,6 +185,11 @@ def apply(lead_id, card, choices, add_phones, login):
             # Помечаем, какие номера пришли с карт, — карточка покажет
             had = (alt.get("phones") or {}).get("value") or []
             alt["phones"] = dict(stamp, value=had + [p for p in added if p not in had])
+
+    if add_platforms and vals["aggregators"]:
+        merged = aggregators.merge(lead.get("aggregators"), vals["aggregators"])
+        if len(merged) > len(lead.get("aggregators") or []):
+            changes["aggregators"] = json.dumps(merged, ensure_ascii=False)
 
     changes["map_alt"] = json.dumps(alt, ensure_ascii=False)
     changes["manual_fields"] = json.dumps(sorted(manual), ensure_ascii=False)

@@ -15,6 +15,7 @@
 """
 
 import time
+from datetime import datetime, timezone
 
 import activity
 import db
@@ -97,7 +98,9 @@ def log(login, action, lead=None, field="", old="", new=""):
     # Действие человека — объект «изменён». Сбор сюда не попадает, иначе
     # еженощная перепроверка перемешивала бы сортировку по правкам
     if lead_id and login and login != SYSTEM:
-        db.conn().execute("UPDATE leads SET edited_at=? WHERE id=?", (db.now(), lead_id))
+        # С поясом: сервер живёт в UTC, а браузер наивное время считал местным
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        db.conn().execute("UPDATE leads SET edited_at=? WHERE id=?", (stamp, lead_id))
     db.conn().commit()
 
 
