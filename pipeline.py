@@ -5,6 +5,7 @@ import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlsplit
 
 import config
 import db
@@ -13,7 +14,7 @@ import niche_rules
 import scoring
 import utils
 from enrich import dadata_lookup, site_audit, whois_check
-from sources import dadata, overpass
+from sources import dadata, overpass, registry
 
 # ── состояние запуска для веб-интерфейса ─────────────────────────────────────
 _state = {
@@ -74,6 +75,97 @@ def merge_sources(osm_leads, dadata_leads):
             result.append(lead)
 
     return result, merged
+
+
+def _host(url):
+    host = (urlsplit(url if "//" in url else "http://" + url).hostname or "") if url else ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def find_duplicate(name, website, phones=(), map_url=""):
+    """Ищет уже заведённый объект — по карточке на картах, домену, телефону
+    или названию. Телефон и карточка важны для объектов с карт: там название
+    часто записано иначе, чем в OSM («Форд 96» и «Ford-96»)."""
+    c = db.conn()
+
+    if map_url:
+        row = c.execute("SELECT id, name FROM leads WHERE map_url = ?", (map_url,)).fetchone()
+        if row:
+            return row
+
+    host = _host(website)
+    if host:
+        row = c.execute(
+            "SELECT id, name FROM leads WHERE website LIKE ? OR final_url LIKE ?",
+            (f"%{host}%", f"%{host}%"),
+        ).fetchone()
+        if row:
+            return row
+
+    # Телефоны хранятся одним видом (+7XXXXXXXXXX), поэтому LIKE по строке
+    # JSON-списка находит номер, даже если у объекта он не основной
+    for phone in phones:
+        row = c.execute("SELECT id, name FROM leads WHERE phone = ? OR phones LIKE ?",
+                        (phone, f'%"{phone}"%')).fetchone()
+        if row:
+            return row
+
+    key = norm_name(name)
+    if key:
+        for row in c.execute("SELECT id, name FROM leads"):
+            if norm_name(row["name"]) == key:
+                return row
+    return None
+
+
+def merge_registry(leads, registry_leads):
+    """Объекты реестра подклеиваем к уже собранным, а не дублируем.
+
+    Совпадение ищем по сайту, телефону и названию — в реестре объект часто
+    записан полнее («Бутик отель "ПЛЮШ"» против «Плюш» в OSM), поэтому одно
+    название ловит не всех. Совпавшему объекту реестр дописывает пустые
+    контакты и ИНН владельца. Что не совпало с текущим сбором, сверяем
+    с базой: объект, заведённый раньше вручную или с карты, второй раз
+    не появится. Возвращает (список, склеено, пропущено как уже известные).
+    """
+    by_host, by_phone, by_name = {}, {}, {}
+    for lead in leads:
+        if _host(lead.get("website")):
+            by_host.setdefault(_host(lead["website"]), lead)
+        for p in [lead.get("phone")] + list(lead.get("phones") or []):
+            if p:
+                by_phone.setdefault(p, lead)
+        if norm_name(lead["name"]):
+            by_name.setdefault(norm_name(lead["name"]), lead)
+
+    result, merged, known = list(leads), 0, 0
+    c = db.conn()
+    for lead in registry_leads:
+        target = (by_host.get(_host(lead["website"]))
+                  or next((by_phone[p] for p in lead["phones"] if p in by_phone), None)
+                  or by_name.get(norm_name(lead["name"])))
+        if target:
+            for field in ("website", "phone", "email"):
+                if lead.get(field) and not target.get(field):
+                    target[field] = lead[field]
+                    target.setdefault("contact_source", {})[field] = "реестр"
+            phones = list(target.get("phones") or [])
+            target["phones"] = phones + [p for p in lead["phones"] if p not in phones]
+            if lead.get("inn") and not target.get("inn"):
+                for field in ("inn", "ogrn", "org_name", "dadata_confidence", "dadata_match"):
+                    target[field] = lead[field]
+            target["source_detail"] = (target.get("source_detail") or "") + " + " + lead["source_detail"]
+            merged += 1
+            continue
+
+        mine = c.execute("SELECT 1 FROM leads WHERE source=? AND source_ref=?",
+                         (lead["source"], lead["source_ref"])).fetchone()
+        if not mine and find_duplicate(lead["name"], lead["website"], lead["phones"]):
+            known += 1
+            continue
+        result.append(lead)
+
+    return result, merged, known
 
 
 # ── проверка одного лида ─────────────────────────────────────────────────────
@@ -165,7 +257,7 @@ def process_lead(lead, do_whois=False, do_dadata=False):
 # ── полный прогон ────────────────────────────────────────────────────────────
 
 def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
-        dadata_discover=False, niche=niche_rules.DEFAULT):
+        dadata_discover=False, use_registry=True, niche=niche_rules.DEFAULT):
     """Сбор по одной нише: niche — код из niche_rules."""
     with _lock:
         if _state["running"]:
@@ -189,6 +281,13 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
         leads, merged = merge_sources(osm_leads, dadata_leads)
         if merged:
             _log(f"Склейка: {merged} компаний из ЕГРЮЛ совпали с объектами на карте")
+
+        # Реестр есть только у размещения: бань, автосервисов и клиник в нём нет
+        if use_registry and niche_rules.get(niche).get("registry"):
+            reg_leads = registry.fetch(_log, use_cache)
+            leads, merged, known = merge_registry(leads, reg_leads)
+            _log(f"Склейка с реестром: {merged} совпали с картой и ЕГРЮЛ, "
+                 f"{known} уже были в базе, {len(reg_leads) - merged - known} новых")
         # Ниша нужна уже при проверке: от неё зависят ОКВЭД для сверки
         # с ЕГРЮЛ и то, проверять ли на сайте бронирование
         for lead in leads:

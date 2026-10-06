@@ -1438,6 +1438,12 @@ async function init() {
       .map((n) => `<option value="${esc(n.code)}">${esc(n.title)}</option>`).join('');
     const open = nicheById(currentNiche);
     if (open && (CFG.collectable || []).includes(open.code)) sel.value = open.code;
+    // Реестр есть только у размещения — у остальных ниш галочку прячем
+    const syncRegistry = () => {
+      $('optRegistryRow').hidden = !(CFG.registry_niches || []).includes(sel.value);
+    };
+    sel.onchange = syncRegistry;
+    syncRegistry();
     $('runDialog').showModal();
   };
   $('runCancel').onclick = () => $('runDialog').close();
@@ -1450,6 +1456,7 @@ async function init() {
         use_osm: $('optOsm').checked, use_dadata: $('optDadata').checked,
         do_whois: $('optWhois').checked, use_cache: $('optCache').checked,
         dadata_discover: $('optDiscover').checked,
+        use_registry: $('optRegistry').checked,
       }),
     });
     startPolling();

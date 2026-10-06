@@ -45,7 +45,7 @@ def fetch(progress=None, token=None, niche=niche_rules.DEFAULT):
         "Authorization": f"Token {token}",
     }
 
-    leads, seen = [], set()
+    leads, seen, outside = [], set(), 0
     total = len(queries)
 
     for i, query in enumerate(queries, 1):
@@ -84,6 +84,18 @@ def fetch(progress=None, token=None, niche=niche_rules.DEFAULT):
             if not okved.startswith(okveds):
                 continue                    # отсекаем всё, что не про эту нишу
 
+            # Фильтр по региону у Dadata — вся область целиком. Город с
+            # пригородом отбираем по координатам адреса, как у OSM
+            geo = (d.get("address") or {}).get("data") or {}
+            try:
+                lat, lon = float(geo["geo_lat"]), float(geo["geo_lon"])
+            except (KeyError, TypeError, ValueError):
+                lat = lon = None
+            s_, w_, n_, e_ = config.CITY_BBOX
+            if lat is None or not (s_ <= lat <= n_ and w_ <= lon <= e_):
+                outside += 1
+                continue
+
             mgmt = d.get("management") or {}
             address = ((d.get("address") or {}).get("value")) or ""
             state = d.get("state") or {}
@@ -99,7 +111,7 @@ def fetch(progress=None, token=None, niche=niche_rules.DEFAULT):
                 "name": (s.get("value") or "").strip(),
                 "category": "По ЕГРЮЛ",
                 "address": address,
-                "lat": None, "lon": None,
+                "lat": lat, "lon": lon,
                 "source": "dadata",
                 "source_ref": inn,
                 "source_detail": f"Dadata / ЕГРЮЛ, ОКВЭД {okved}, запрос «{query}»",
@@ -117,5 +129,6 @@ def fetch(progress=None, token=None, niche=niche_rules.DEFAULT):
         time.sleep(0.25)                    # бережём суточный лимит и не долбим API
 
     if progress:
-        progress(f"Dadata: {len(leads)} компаний ниши")
+        progress(f"Dadata: {len(leads)} компаний ниши"
+                 + (f", ещё {outside} вне города и пригорода — пропущены" if outside else ""))
     return leads

@@ -170,6 +170,9 @@ def get_config(request: Request):
         "editable": EDITABLE,
         # Для каких ниш умеет работать сбор: окно запуска показывает только их
         "collectable": niche_rules.collectable(),
+        # У каких из них есть реестр средств размещения
+        "registry_niches": [c for c in niche_rules.collectable()
+                            if niche_rules.get(c).get("registry")],
         "field_labels": FIELD_LABELS,
 
     }
@@ -679,46 +682,6 @@ def remove_payment(request: Request, payment_id: int):
     return {"ok": True}
 
 
-def _find_duplicate(name, website, phones=(), map_url=""):
-    """Ищет уже заведённый объект — по карточке на картах, домену, телефону
-    или названию. Телефон и карточка важны для объектов с карт: там название
-    часто записано иначе, чем в OSM («Форд 96» и «Ford-96»)."""
-    c = db.conn()
-
-    if map_url:
-        row = c.execute("SELECT id, name FROM leads WHERE map_url = ?", (map_url,)).fetchone()
-        if row:
-            return row
-
-    host = ""
-    if website:
-        host = (urlsplit(website if "//" in website else "http://" + website).hostname or "")
-        host = host[4:] if host.startswith("www.") else host
-
-    if host:
-        row = c.execute(
-            "SELECT id, name FROM leads WHERE website LIKE ? OR final_url LIKE ?",
-            (f"%{host}%", f"%{host}%"),
-        ).fetchone()
-        if row:
-            return row
-
-    # Телефоны хранятся одним видом (+7XXXXXXXXXX), поэтому LIKE по строке
-    # JSON-списка находит номер, даже если у объекта он не основной
-    for phone in phones:
-        row = c.execute("SELECT id, name FROM leads WHERE phone = ? OR phones LIKE ?",
-                        (phone, f'%"{phone}"%')).fetchone()
-        if row:
-            return row
-
-    key = pipeline.norm_name(name)
-    if key:
-        for row in c.execute("SELECT id, name FROM leads"):
-            if pipeline.norm_name(row["name"]) == key:
-                return row
-    return None
-
-
 @app.post("/api/lead")
 def create_lead(request: Request, payload: dict = Body(...)):
     """Добавляет объект руками: маркетолог нашёл его сам."""
@@ -733,7 +696,7 @@ def create_lead(request: Request, payload: dict = Body(...)):
     phones = utils.split_phones(payload.get("phone") or "")
     map_url, map_source = _map_card(payload.get("map_url"))
 
-    dup = _find_duplicate(name, website, phones, map_url)
+    dup = pipeline.find_duplicate(name, website, phones, map_url)
     if dup:
         raise HTTPException(409, f"Такой объект уже есть: «{dup['name']}»")
 
@@ -1093,6 +1056,7 @@ def start_run(request: Request, payload: dict = Body(default={})):
         do_whois=payload.get("do_whois", False),
         use_cache=payload.get("use_cache", True),
         dadata_discover=payload.get("dadata_discover", False),
+        use_registry=payload.get("use_registry", True),
     )
     return {"ok": True}
 
