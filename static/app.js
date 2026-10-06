@@ -25,7 +25,11 @@ async function api(url, opts) {
     location.href = '/login?next=' + encodeURIComponent(location.pathname);
     throw new Error('Требуется вход');
   }
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (!r.ok) {
+    const err = new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    err.status = r.status;
+    throw err;
+  }
   return r.json();
 }
 
@@ -344,7 +348,9 @@ async function catchToQueue() {
   const text = {
     added: `✓ «${esc(card.name)}» в очереди. Всего: ${r.count}`,
     queued: `«${esc(card.name)}» уже ждёт в очереди. Всего: ${r.count}`,
-    in_base: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}» — в очередь не ставлю`,
+    update: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}» — на карте новые данные,
+      поставил в очередь на сравнение. Всего: ${r.count}`,
+    same: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}», новых данных на карте нет`,
   }[r.status];
   msg.innerHTML = text;
   // Закрыть можно только вкладку, которую открыл скрипт, — кнопка так и делает.
@@ -352,7 +358,7 @@ async function catchToQueue() {
   setTimeout(() => {
     window.close();
     msg.innerHTML = text + '<br><span class="muted" style="font-size:14px">Вкладку можно закрыть.</span>' + tail;
-  }, r.status === 'in_base' ? 2500 : 900);
+  }, ['same', 'update'].includes(r.status) ? 2500 : 900);
 }
 
 // То, что уходит на сервер: номер выбранного или название нового
@@ -388,6 +394,30 @@ function contactChips(l) {
   if (l.email) out.push(`<a class="chip" href="mailto:${esc(l.email)}">@</a>`);
   return out.length ? `<div class="chips">${out.join('')}</div>`
                     : '<span class="chip off">нет контактов</span>';
+}
+
+// Данные с карт, которые не совпали с базой: лежат рядом с основными,
+// пока человек не решит — сделать основными или убрать
+const ALT_LABELS = { name: 'Название', website: 'Сайт', address: 'Адрес', telegram: 'Telegram',
+  vk: 'ВКонтакте', whatsapp: 'WhatsApp', email: 'Почта', map_url: 'Карточка на карте' };
+function mapAltBlock(l) {
+  const items = Object.entries(l.map_alt || {}).filter(([f]) => f !== 'phones');
+  if (!items.length) return '';
+  const show = (f, v) => (f === 'website' || f === 'map_url')
+    ? `<a href="${esc(/^https?:/.test(v) ? v : 'http://' + v)}" target="_blank" rel="noopener">${esc(v)}</a>`
+    : esc(v);
+  return `<div class="mapalt">
+    <div class="mapalt-h">С карт — не совпало с базой</div>
+    ${items.map(([f, it]) => `<div class="mapalt-row">
+      <div><b>${esc(ALT_LABELS[f] || f)}:</b> ${show(f, it.value)}
+        <span class="muted">· ${esc(it.source || 'карты')}, ${esc((it.at || '').slice(0, 10))}${
+          it.by ? ', ' + esc(it.by) : ''}</span></div>
+      <div class="mapalt-btns">
+        <button data-alt="${esc(f)}" data-act="promote">Сделать основным</button>
+        <button data-alt="${esc(f)}" data-act="dismiss">Убрать</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
 }
 
 // Как гость может забронировать: сам, через заявку или никак
@@ -900,7 +930,7 @@ async function openLead(id) {
 
     ${(l.manual_fields || []).length || l.website_manual ? `
       <div class="wasurl" style="margin-top:10px">
-        Исправлено вручную: ${esc([...(l.manual_fields || []),
+        Исправлено вручную или взято с карт: ${esc([...(l.manual_fields || []),
           ...(l.website_manual ? ['сайт'] : [])].map((f) => CFG.editable[f] || f).join(', '))}.
         Сбор эти поля не перезаписывает.
         <button class="linkbtn" id="unlockLead">Вернуть автозаполнение</button>
@@ -926,7 +956,10 @@ async function openLead(id) {
       ${l.map_url ? `<a class="chip" style="margin-top:6px" target="_blank" rel="noopener"
          href="${esc(l.map_url)}">${/2gis\./.test(l.map_url) ? '2ГИС' : 'Яндекс Карты'} ↗</a>` : ''}
       ${l.phones && l.phones.length > 1
-        ? `<div class="muted" style="margin-top:6px">Ещё номера: ${l.phones.slice(1).map(esc).join(', ')}</div>` : ''}
+        ? `<div class="muted" style="margin-top:6px">Ещё номера: ${l.phones.slice(1).map((p) =>
+            ((((l.map_alt || {}).phones || {}).value || []).includes(p)
+              ? `${esc(p)} <span class="maptag">с карт</span>` : esc(p))).join(', ')}</div>` : ''}
+      ${mapAltBlock(l)}
       ${cs.length ? `<div class="muted" style="margin-top:6px">Откуда контакт:
         ${cs.map(([k, v]) => `${esc(k)} — ${esc(v)}`).join(', ')}</div>` : ''}
     </div>
@@ -1108,6 +1141,20 @@ async function openLead(id) {
   $('aiLead').onclick = () => openResearch(l);
 
   $('editLead').onclick = () => openEditor(l);
+
+  $('drawer').querySelectorAll('[data-alt]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/api/lead/${id}/map-alt`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field: b.dataset.alt, action: b.dataset.act }),
+        });
+        await openLead(id);
+        loadLeads();
+      } catch (e) { alert('Не получилось: ' + e.message); b.disabled = false; }
+    };
+  });
 
   if ($('unlockLead')) {
     $('unlockLead').onclick = async () => {
@@ -1536,12 +1583,15 @@ async function init() {
                      'addWa', 'addEmail', 'addAddr', 'addNote'];
   let addMapUrl = '';        // ссылка на карточку, если форму заполнили с карт
   let addQueueId = null;     // номер в очереди с карт, если форму открыли оттуда
+  let addForce = false;      // человек решил, что найденный «двойник» — другой объект
 
   // card — то, что прислала кнопка «В leadgen» с Яндекс Карт или 2ГИС
-  const openAdd = (card, queueId = null) => {
+  const openAdd = (card, queueId = null, force = false) => {
     addFields.forEach((id) => { $(id).value = ''; });
     addMapUrl = '';
     addQueueId = queueId;
+    addForce = force;
+    lastCard = card;
     // Объект по умолчанию ложится в ту нишу, что открыта сейчас
     let niche = currentNiche || NICHES.default_id;
     let cat = '';
@@ -1583,10 +1633,8 @@ async function init() {
       card = JSON.parse(decodeURIComponent(location.hash.slice(5)));
     } catch (e) { /* битая ссылка — просто не открываем форму */ }
     history.replaceState(null, '', location.pathname + location.search);
-    if (card && typeof card === 'object') openAdd(card);
+    if (card && typeof card === 'object') openCard(card);
   };
-  takeCard();
-  window.addEventListener('hashchange', takeCard);
   $('addCancel').onclick = () => {
     $('addDialog').close();
     if (addQueueId) openQueue();          // проверяли карточку из очереди — вернёмся к ней
@@ -1623,6 +1671,7 @@ async function init() {
           address: $('addAddr').value,
           note: $('addNote').value,
           queue_id: addQueueId,
+          force: addForce,
           ...picked,
         }),
       });
@@ -1634,12 +1683,128 @@ async function init() {
       if (addQueueId) openQueue();
       else openLead(lead.id);             // сразу показываем, что получилось
     } catch (e) {
+      if (e.status === 409) {
+        // Такой объект уже есть — вместо отказа показываем, что форма к нему добавит
+        const card = {
+          name, website: $('addSite').value, phones: [$('addPhone').value],
+          telegram: $('addTg').value, vk: $('addVk').value, whatsapp: $('addWa').value,
+          email: $('addEmail').value, address: $('addAddr').value, map_url: addMapUrl,
+          source: lastCard ? lastCard.source : 'manual', rubric: lastCard ? lastCard.rubric : '',
+        };
+        const m = await api('/api/lead-match', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ card }),
+        }).catch(() => null);
+        if (m && m.lead) {
+          $('addGo').disabled = false;
+          $('addGo').textContent = 'Добавить';
+          $('addDialog').close();
+          openMerge(card, m, addQueueId);
+          return;
+        }
+      }
       $('addErr').textContent = e.message;
       $('addErr').classList.add('on');
     }
     $('addGo').disabled = false;
     $('addGo').textContent = 'Добавить';
   };
+
+  // ── объект с карт уже есть в базе: сравнение и слияние ─────────────
+  let lastCard = null;       // последняя карточка с карт, открытая в форме
+  let merge = null;          // { card, lead, diff, queueId }
+
+  // Карточка с карт: есть в базе — сравнение, нет — форма объекта
+  const openCard = async (card, queueId = null) => {
+    const m = await api('/api/lead-match', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card }),
+    }).catch(() => null);
+    if (m && m.lead) openMerge(card, m, queueId);
+    else openAdd(card, queueId);
+  };
+
+  const KIND_TEXT = { same: 'совпадает', known: 'уже сохранено с карт' };
+  const openMerge = (card, m, queueId = null) => {
+    merge = { card, lead: m.lead, diff: m.diff, queueId };
+    const d = m.diff;
+    $('mergeName').textContent = `«${m.lead.name}»`;
+    $('mergeFrom').textContent = d.news
+      ? `Есть новые данные (источник: ${d.source}). Пустые поля заполнятся, а то, что не совпало, `
+        + 'сохранится рядом с данными базы с пометкой источника — ничего не перезапишется.'
+      : `Новых данных нет (источник: ${d.source}) — всё это уже есть в базе.`;
+    const row = (r) => {
+      let act;
+      if (r.kind === 'fill') {
+        act = `<label class="mpick"><input type="checkbox" data-field="${r.field}" data-how="fill" checked> заполнить</label>`;
+      } else if (r.kind === 'conflict') {
+        act = `<select data-field="${r.field}">
+          <option value="alt" selected>сохранить рядом</option>
+          <option value="replace">заменить</option>
+          <option value="skip">не брать</option></select>
+          ${r.manual ? '<div class="mnote">в базе исправлено вручную</div>' : ''}`;
+      } else {
+        act = `<span class="muted">${KIND_TEXT[r.kind]}</span>`;
+      }
+      return `<div class="mrow m-${r.kind}">
+        <div class="mlabel">${esc(r.label)}</div>
+        <div class="mval"><span class="mcap">в базе</span>${esc(r.base) || '<span class="muted">—</span>'}</div>
+        <div class="mval"><span class="mcap">с карт</span>${esc(r.card)}</div>
+        <div class="mact">${act}</div>
+      </div>`;
+    };
+    const phones = d.phones_new.length ? `<div class="mrow m-fill">
+        <div class="mlabel">Телефоны</div>
+        <div class="mval"><span class="mcap">в базе</span>${esc((m.lead.phones || []).join(', ') || m.lead.phone || '') || '<span class="muted">—</span>'}</div>
+        <div class="mval"><span class="mcap">с карт</span>${d.phones_new.map(esc).join(', ')}</div>
+        <div class="mact"><label class="mpick"><input type="checkbox" id="mergePhones" checked> добавить</label></div>
+      </div>` : '';
+    $('mergeRows').innerHTML = `<div class="mgrid">${d.rows.map(row).join('')}${phones}</div>`;
+    $('mergeGo').disabled = !d.news;
+    $('mergeErr').classList.remove('on');
+    $('mergeDialog').showModal();
+  };
+
+  const closeMerge = () => {
+    $('mergeDialog').close();
+    if (merge && merge.queueId) openQueue();
+  };
+  $('mergeCancel').onclick = closeMerge;
+  $('mergeSeparate').onclick = () => {
+    const { card, queueId } = merge;
+    $('mergeDialog').close();
+    openAdd(card, queueId, true);
+  };
+  $('mergeGo').onclick = async () => {
+    const choices = {};
+    $('mergeRows').querySelectorAll('[data-field]').forEach((el) => {
+      choices[el.dataset.field] = el.tagName === 'SELECT' ? el.value : (el.checked ? 'fill' : 'skip');
+    });
+    $('mergeGo').disabled = true;
+    $('mergeGo').textContent = 'Сохраняю…';
+    try {
+      await api(`/api/lead/${merge.lead.id}/merge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          card: merge.card, choices, queue_id: merge.queueId,
+          add_phones: $('mergePhones') ? $('mergePhones').checked : false,
+        }),
+      });
+      $('mergeDialog').close();
+      loadLeads(); loadStats();
+      if (merge.queueId) openQueue();
+      else openLead(merge.lead.id);
+    } catch (e) {
+      $('mergeErr').textContent = e.message;
+      $('mergeErr').classList.add('on');
+    }
+    $('mergeGo').disabled = false;
+    $('mergeGo').textContent = 'Сохранить';
+  };
+
+  // Карточка, пришедшая в адресе после «#add=», — когда всё выше уже объявлено
+  takeCard();
+  window.addEventListener('hashchange', takeCard);
 
   // ── очередь карточек с карт ──────────────────────────────────────────
   let queueItems = [];
@@ -1679,10 +1844,12 @@ async function init() {
           <div class="qmeta">${meta || 'контактов нет'}</div>
           <div class="qmeta">${esc(where)}${c.rubric ? ': ' + esc(c.rubric) : ''} →
             ${niche ? esc(niche) : '<b>нишу выберите сами</b>'} · добавил ${esc(it.added_by)}</div>
-          ${it.duplicate ? `<div class="qdup">Уже в базе: «${esc(it.duplicate)}»</div>` : ''}
+          ${it.duplicate ? `<div class="qdup">Уже в базе: «${esc(it.duplicate)}» — ${it.news
+            ? 'на карте есть новые данные' : 'новых данных нет'}</div>` : ''}
         </div>
         <div class="qbtns">
-          ${it.duplicate ? '' : '<button class="qcheck">Проверить</button>'}
+          ${!it.duplicate ? '<button class="qcheck">Проверить</button>'
+            : it.news ? '<button class="qcheck">Сравнить</button>' : ''}
           <button class="qdel" title="Убрать из очереди">Убрать</button>
         </div>
       </div>`;
@@ -1718,7 +1885,7 @@ async function init() {
     if (!it) return;
     if (e.target.closest('.qcheck')) {
       $('queueDialog').close();
-      openAdd(it.card, it.id);
+      openCard(it.card, it.id);
     } else if (e.target.closest('.qdel')) {
       try {
         await api(`/api/queue/${it.id}`, { method: 'DELETE' });

@@ -727,3 +727,39 @@ dialog.queuedlg { max-width: 860px; width: calc(100% - 32px); }
 .catch { display: flex; min-height: 100vh; align-items: center; justify-content: center;
   padding: 16px; text-align: center; font-size: 17px; }
 .catch a { display: inline-block; margin-top: 10px; font-size: 14px; }
+
+/* ── объект с карт уже в базе: сравнение ────────────────────────────────── */
+dialog.mergedlg { max-width: 860px; width: calc(100% - 32px); }
+.mgrid { border-top: 1px solid var(--line); max-height: 55vh; overflow-y: auto; }
+.mrow { display: grid; grid-template-columns: 110px 1fr 1fr 170px; gap: 10px;
+  align-items: start; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.mrow .mlabel { color: var(--muted); font-size: 13px; padding-top: 2px; }
+.mrow .mval { overflow-wrap: anywhere; min-width: 0; }
+.mrow .mcap { display: none; }
+.mrow.m-same, .mrow.m-known { opacity: .6; }
+.mrow.m-conflict .mval:nth-child(3) { color: var(--accent); }
+.mrow.m-fill .mval:nth-child(3) { color: var(--ok); }
+.mrow select { width: 100%; }
+.mpick { display: flex; gap: 6px; align-items: center; }
+.mnote { font-size: 12px; color: var(--warm); margin-top: 4px; }
+.mergebtns { display: flex; gap: 8px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+.mergebtns .spacer { flex: 1; }
+.mergebtns .linkbtn { margin: 0; }
+@media (max-width: 640px) {
+  .mrow { grid-template-columns: 1fr 1fr; }
+  .mrow .mlabel, .mrow .mact { grid-column: 1 / -1; }
+  .mrow .mcap { display: block; font-size: 11px; color: var(--muted); }
+}
+
+/* Данные с карт в карточке лида */
+.mapalt { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--accent);
+  border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
+.mapalt-h { font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+.mapalt-row { display: flex; gap: 8px; justify-content: space-between; align-items: flex-start;
+  flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--line); }
+.mapalt-row:first-of-type { border-top: none; }
+.mapalt-row > div:first-child { min-width: 0; overflow-wrap: anywhere; flex: 1 1 200px; }
+.mapalt-btns { display: flex; gap: 6px; }
+.mapalt-btns button { padding: 3px 9px; font-size: 12px; }
+.maptag { font-size: 11px; color: var(--accent); background: var(--accent-soft);
+  border-radius: 4px; padding: 0 4px; }

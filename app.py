@@ -19,6 +19,7 @@ import backup
 import config
 import db
 import history
+import mapmerge
 import metrics
 import niche_rules
 import niches
@@ -707,11 +708,16 @@ def queue_add(request: Request, payload: dict = Body(...)):
     if not card["name"]:
         raise HTTPException(400, "В карточке нет названия")
 
+    # Объект уже в базе: в очередь он встаёт на сравнение, если карта
+    # принесла что-то новое, — иначе разбирать там нечего
     dup = _card_duplicate(card)
     if dup:
-        return {"status": "in_base", "lead": dup["name"], "count": db.queue_count()}
+        news = mapmerge.diff(_lead_dict(dup["id"]), card)["news"]
+        if not news:
+            return {"status": "same", "lead": dup["name"], "count": db.queue_count()}
     _, added = db.queue_add(card, request.state.login)
-    return {"status": "added" if added else "queued", "count": db.queue_count()}
+    status = ("update" if dup else "added") if added else "queued"
+    return {"status": status, "lead": dup["name"] if dup else "", "count": db.queue_count()}
 
 
 @app.get("/api/queue")
@@ -720,7 +726,64 @@ def queue_list():
     for item in items:
         dup = _card_duplicate(item["card"])
         item["duplicate"] = dup["name"] if dup else ""
+        item["duplicate_id"] = dup["id"] if dup else None
+        item["news"] = mapmerge.diff(_lead_dict(dup["id"]), item["card"])["news"] if dup else 0
     return {"items": items}
+
+
+def _lead_dict(lead_id):
+    row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    return db.row_to_dict(row) if row else None
+
+
+@app.post("/api/lead-match")
+def lead_match(payload: dict = Body(...)):
+    """Есть ли объект с карты в базе, и что карта к нему добавляет."""
+    card = payload.get("card") or {}
+    dup = _card_duplicate(card)
+    if not dup:
+        return {"lead": None}
+    lead = _lead_dict(dup["id"])
+    return {"lead": {k: lead.get(k) for k in ("id", "name", "website", "address", "phone",
+                                               "phones", "status", "niche_id", "category")},
+            "diff": mapmerge.diff(lead, card)}
+
+
+@app.post("/api/lead/{lead_id}/merge")
+def lead_merge(request: Request, lead_id: int, payload: dict = Body(...)):
+    """Дописывает к объекту данные с карт по выбору человека."""
+    row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Лид не найден")
+    card = payload.get("card") or {}
+    choices = {k: v for k, v in (payload.get("choices") or {}).items()
+               if v in ("fill", "alt", "replace", "skip")}
+    site, old_site = mapmerge.apply(lead_id, card, choices,
+                                    bool(payload.get("add_phones")), request.state.login)
+    if card.get("rubric"):
+        row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+        where = "2ГИС" if card.get("source") == "2gis" else "Яндекс Картах"
+        _add_note(request.state.login, row, f"Рубрика в {where}: {card['rubric']}")
+    if payload.get("queue_id"):
+        db.queue_delete(int(payload["queue_id"]))
+    if site and site != old_site:
+        row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+        return _set_website(request.state.login, row, site)
+    return pipeline.rescore_one(lead_id)
+
+
+@app.post("/api/lead/{lead_id}/map-alt")
+def lead_map_alt(request: Request, lead_id: int, payload: dict = Body(...)):
+    """Значение с карт из карточки: сделать основным или убрать."""
+    field = payload.get("field") or ""
+    if field not in mapmerge.LABELS:
+        raise HTTPException(400, "Неизвестное поле")
+    promote = payload.get("action") == "promote"
+    site = mapmerge.drop_alt(lead_id, field, request.state.login, promote=promote)
+    if site:
+        row = db.conn().execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+        return _set_website(request.state.login, row, site)
+    return pipeline.rescore_one(lead_id) if promote else _lead_dict(lead_id)
 
 
 @app.get("/api/queue/count")
@@ -748,7 +811,8 @@ def create_lead(request: Request, payload: dict = Body(...)):
     phones = utils.split_phones(payload.get("phone") or "")
     map_url, map_source = _map_card(payload.get("map_url"))
 
-    dup = pipeline.find_duplicate(name, website, phones, map_url)
+    # force — человек посмотрел найденного «двойника» и решил, что это другой объект
+    dup = None if payload.get("force") else pipeline.find_duplicate(name, website, phones, map_url)
     if dup:
         raise HTTPException(409, f"Такой объект уже есть: «{dup['name']}»")
 
@@ -870,6 +934,8 @@ FIELD_LABELS = dict(EDITABLE, **{
     "ai_checked_at": "Дата автопроверки",
     "ai_model": "Чем проверено",
     "ai_error": "Ошибка автопроверки",
+    "map_url": "Карточка на карте",
+    "map_alt": "Данные с карт",
 })
 
 
@@ -1059,13 +1125,18 @@ def change_website(request: Request, lead_id: int, payload: dict = Body(...)):
         raise HTTPException(404, "Лид не найден")
 
     new = utils.decode_idna((payload.get("website") or "").strip())
-    old = (row["website"] or "").strip()
-
-    if new == old:
+    if new == (row["website"] or "").strip():
         raise HTTPException(400, "Это тот же адрес")
     if new and not utils.looks_like_url(new):
         raise HTTPException(400, "Не похоже на адрес сайта")
+    return _set_website(request.state.login, row, new)
 
+
+def _set_website(login, row, new):
+    """Новый адрес сайта: старый уходит в «Было», лид перепроверяется."""
+    c = db.conn()
+    lead_id = row["id"]
+    old = (row["website"] or "").strip()
     # Старый адрес не затираем пустым: если сайт убрали совсем,
     # прежняя ссылка всё равно пригодится для истории.
     previous = old or (row["previous_website"] or "")
@@ -1076,8 +1147,7 @@ def change_website(request: Request, lead_id: int, payload: dict = Body(...)):
         (new, previous, 1, db.now(), lead_id),
     )
     c.commit()
-    history.log(request.state.login, "website", lead=row,
-                field="website", old=old, new=new)
+    history.log(login, "website", lead=row, field="website", old=old, new=new)
 
     return pipeline.recheck_lead(lead_id, drop_site_contacts=True)
 

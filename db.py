@@ -390,6 +390,9 @@ MIGRATIONS = [
     ("niche_id", "INTEGER"),
     ("category_id", "INTEGER"),
     ("map_url", "TEXT DEFAULT ''"),
+    # Данные с карт, не совпавшие с базой: {поле: {value, source, at, by}}.
+    # Основное значение они не перезаписывают — лежат рядом до решения человека
+    ("map_alt", "TEXT DEFAULT ''"),
 ]
 
 
@@ -543,6 +546,10 @@ def row_to_dict(r: sqlite3.Row) -> dict:
     d["manual_fields"] = manual_list(d.get("manual_fields"))
     for f in ("ai_problems", "ai_sources", "ai_aggregators"):
         d[f] = json_list(d.get(f))
+    try:
+        d["map_alt"] = json.loads(d.get("map_alt") or "{}")
+    except (ValueError, TypeError):
+        d["map_alt"] = {}
     for f in ("phones", "missing", "contact_source"):
         if d.get(f):
             try:

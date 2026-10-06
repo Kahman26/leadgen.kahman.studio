@@ -205,6 +205,20 @@
   </div>
 </dialog>
 
+<!-- Объект с карт уже есть в базе: что карта добавляет и что с этим делать -->
+<dialog id="mergeDialog" class="mergedlg">
+  <h3 style="margin-top:0">Уже есть в базе: <span id="mergeName"></span></h3>
+  <div class="fromcard" id="mergeFrom"></div>
+  <div class="err" id="mergeErr"></div>
+  <div id="mergeRows"></div>
+  <div class="mergebtns">
+    <button id="mergeSeparate" class="linkbtn">Это другой объект — добавить отдельно</button>
+    <span class="spacer"></span>
+    <button id="mergeCancel">Отмена</button>
+    <button id="mergeGo" class="primary">Сохранить</button>
+  </div>
+</dialog>
+
 <!-- Очередь карточек, которые кнопка «В leadgen» собрала с карт -->
 <dialog id="queueDialog" class="queuedlg">
   <h3 style="margin-top:0">Очередь с карт</h3>
