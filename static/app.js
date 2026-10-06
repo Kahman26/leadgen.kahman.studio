@@ -356,6 +356,10 @@ async function catchToQueue() {
     $('catchFoot').innerHTML = 'Вкладку можно закрыть. <a href="/#queue">Открыть очередь</a>';
   };
   $('catchClose').onclick = close;
+  // Клик мимо карточки — тоже закрыть: так быстрее вернуться к карте
+  document.querySelector('.catch').addEventListener('click', (e) => {
+    if (!e.target.closest('.catchcard')) close();
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   // Вкладка уже на «/», и ссылка «/#queue» сменила бы только хвост адреса —
   // без перезагрузки интерфейс не поднимется. Таймер при этом останавливаем
@@ -379,7 +383,7 @@ async function catchToQueue() {
     bar.firstElementChild.classList.add('run');
     let left = CATCH_SECONDS;
     const foot = () => {
-      $('catchFoot').innerHTML = `Закроется через ${left} с · Esc — закрыть сейчас
+      $('catchFoot').innerHTML = `Закроется через ${left} с · Esc или клик мимо — закрыть сейчас
         <a href="/#queue">Открыть очередь</a>`;
     };
     foot();

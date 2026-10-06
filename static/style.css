@@ -727,7 +727,8 @@ dialog.queuedlg { max-width: 860px; width: calc(100% - 32px); }
 /* Вкладка, которую открыла кнопка с карт в режиме очереди: показать итог
    несколько секунд и закрыться */
 .catch { display: flex; min-height: 100vh; align-items: center; justify-content: center;
-  padding: 16px; }
+  padding: 16px; cursor: pointer; }
+.catchcard { cursor: default; }
 .catchcard { position: relative; width: 100%; max-width: 440px; padding: 28px 24px 22px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: var(--shadow); text-align: center; }
