@@ -682,6 +682,58 @@ def remove_payment(request: Request, payment_id: int):
     return {"ok": True}
 
 
+# ── очередь карточек с карт ──────────────────────────────────────────────────
+
+CARD_FIELDS = ("name", "website", "address", "telegram", "vk", "whatsapp", "email",
+               "rubric", "source", "map_url")
+
+
+def _card_duplicate(card):
+    phones = utils.split_phones(", ".join(card.get("phones") or []))
+    map_url, _ = _map_card(card.get("map_url"))
+    return pipeline.find_duplicate(card.get("name") or "", card.get("website") or "",
+                                   phones, map_url)
+
+
+@app.post("/api/queue")
+def queue_add(request: Request, payload: dict = Body(...)):
+    """Карточка от кнопки «В leadgen» в режиме очереди. Объект, который
+    уже есть в базе, в очередь не ставим — проверять там нечего."""
+    raw = payload.get("card") or {}
+    card = {k: str(raw.get(k) or "").strip()[:500] for k in CARD_FIELDS}
+    card["phones"] = [str(p).strip()[:40] for p in (raw.get("phones") or [])][:8]
+    # Без хвоста с координатами — иначе та же карточка встанет в очередь дважды
+    card["map_url"] = _map_card(card["map_url"])[0]
+    if not card["name"]:
+        raise HTTPException(400, "В карточке нет названия")
+
+    dup = _card_duplicate(card)
+    if dup:
+        return {"status": "in_base", "lead": dup["name"], "count": db.queue_count()}
+    _, added = db.queue_add(card, request.state.login)
+    return {"status": "added" if added else "queued", "count": db.queue_count()}
+
+
+@app.get("/api/queue")
+def queue_list():
+    items = db.queue_list()
+    for item in items:
+        dup = _card_duplicate(item["card"])
+        item["duplicate"] = dup["name"] if dup else ""
+    return {"items": items}
+
+
+@app.get("/api/queue/count")
+def queue_count():
+    return {"count": db.queue_count()}
+
+
+@app.delete("/api/queue/{item_id}")
+def queue_delete(item_id: int):
+    db.queue_delete(item_id)
+    return {"count": db.queue_count()}
+
+
 @app.post("/api/lead")
 def create_lead(request: Request, payload: dict = Body(...)):
     """Добавляет объект руками: маркетолог нашёл его сам."""
@@ -756,6 +808,9 @@ def create_lead(request: Request, payload: dict = Body(...)):
     pipeline.rescore_one(cur.lastrowid)
     row = c.execute("SELECT * FROM leads WHERE id=?", (cur.lastrowid,)).fetchone()
     history.log(request.state.login, "create", lead=row, new=row["name"])
+    # Объект пришёл из очереди с карт — проверен и сохранён, из очереди убираем
+    if payload.get("queue_id"):
+        db.queue_delete(int(payload["queue_id"]))
     for what in created:
         history.log(request.state.login, "niches", new=f"Создал {what}")
     if (payload.get("note") or "").strip():

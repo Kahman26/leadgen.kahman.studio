@@ -297,6 +297,64 @@ function guessCategory(rubric) {
   return best;
 }
 
+// Заметка к объекту с карт: откуда пришла рубрика
+function cardNote(card) {
+  if (!card.rubric) return '';
+  return `Рубрика в ${card.source === '2gis' ? '2ГИС' : 'Яндекс Картах'}: ${card.rubric}`;
+}
+
+// Что делает кнопка «В leadgen»: 'form' — открывает форму объекта (как было
+// с самого начала), 'queue' — ставит карточку в очередь на проверку. Это
+// привычка конкретного человека, поэтому живёт в браузере, а не в базе:
+// пропала настройка — кнопка просто вернётся к форме.
+const MAP_MODE_KEY = 'leadgen.mapMode';
+function mapMode() {
+  try { return localStorage.getItem(MAP_MODE_KEY) === 'queue' ? 'queue' : 'form'; }
+  catch (e) { return 'form'; }
+}
+function setMapMode(mode) {
+  try { localStorage.setItem(MAP_MODE_KEY, mode); } catch (e) { /* без хранилища — форма */ }
+}
+
+// Вкладка, открытая кнопкой с карт в режиме очереди. Весь интерфейс ей не
+// нужен: поставить карточку в очередь, показать одну строку и закрыться —
+// браузер вернёт человека на вкладку с картой.
+async function catchToQueue() {
+  let card = null;
+  try { card = JSON.parse(decodeURIComponent(location.hash.slice(5))); } catch (e) { /* битая */ }
+  history.replaceState(null, '', location.pathname + location.search);
+  document.title = 'В очередь — сборщик лидов';
+  document.body.innerHTML = '<div class="catch"><div id="catchMsg">Ставлю в очередь…</div></div>';
+  const msg = $('catchMsg');
+  const tail = '<br><a href="/#queue">Открыть очередь</a>';
+  if (!card || typeof card !== 'object') {
+    msg.innerHTML = 'Не получилось прочитать карточку. Нажмите кнопку на карте ещё раз.' + tail;
+    return;
+  }
+  let r;
+  try {
+    r = await api('/api/queue', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card }),
+    });
+  } catch (e) {
+    msg.innerHTML = `Не поставил в очередь: ${esc(e.message)}` + tail;
+    return;
+  }
+  const text = {
+    added: `✓ «${esc(card.name)}» в очереди. Всего: ${r.count}`,
+    queued: `«${esc(card.name)}» уже ждёт в очереди. Всего: ${r.count}`,
+    in_base: `«${esc(card.name)}» уже есть в базе как «${esc(r.lead)}» — в очередь не ставлю`,
+  }[r.status];
+  msg.innerHTML = text;
+  // Закрыть можно только вкладку, которую открыл скрипт, — кнопка так и делает.
+  // Если браузер не дал, оставляем ссылку на очередь.
+  setTimeout(() => {
+    window.close();
+    msg.innerHTML = text + '<br><span class="muted" style="font-size:14px">Вкладку можно закрыть.</span>' + tail;
+  }, r.status === 'in_base' ? 2500 : 900);
+}
+
 // То, что уходит на сервер: номер выбранного или название нового
 function pickerPayload(p) {
   const out = {};
@@ -1477,11 +1535,13 @@ async function init() {
   const addFields = ['addName', 'addSite', 'addPhone', 'addTg', 'addVk',
                      'addWa', 'addEmail', 'addAddr', 'addNote'];
   let addMapUrl = '';        // ссылка на карточку, если форму заполнили с карт
+  let addQueueId = null;     // номер в очереди с карт, если форму открыли оттуда
 
   // card — то, что прислала кнопка «В leadgen» с Яндекс Карт или 2ГИС
-  const openAdd = (card) => {
+  const openAdd = (card, queueId = null) => {
     addFields.forEach((id) => { $(id).value = ''; });
     addMapUrl = '';
+    addQueueId = queueId;
     // Объект по умолчанию ложится в ту нишу, что открыта сейчас
     let niche = currentNiche || NICHES.default_id;
     let cat = '';
@@ -1497,11 +1557,12 @@ async function init() {
       $('addWa').value = card.whatsapp || '';
       $('addEmail').value = card.email || '';
       $('addAddr').value = card.address || '';
-      if (card.rubric) $('addNote').value = `Рубрика в ${where === '2ГИС' ? '2ГИС' : 'Яндекс Картах'}: ${card.rubric}`;
+      $('addNote').value = cardNote(card);
       addMapUrl = card.map_url || '';
       const guess = guessCategory(card.rubric);
       if (guess) { niche = guess.niche; cat = guess.cat; }
-      $('addFrom').textContent = `Заполнено из ${where}. Проверьте поля и нишу, потом «Добавить».`;
+      $('addFrom').textContent = `${queueId ? 'Карточка из очереди, ' : 'Заполнено '}из ${where}. `
+        + 'Проверьте поля и нишу, потом «Добавить».';
     }
 
     $('addPicker').innerHTML = pickerHTML('add', niche, cat);
@@ -1526,7 +1587,10 @@ async function init() {
   };
   takeCard();
   window.addEventListener('hashchange', takeCard);
-  $('addCancel').onclick = () => $('addDialog').close();
+  $('addCancel').onclick = () => {
+    $('addDialog').close();
+    if (addQueueId) openQueue();          // проверяли карточку из очереди — вернёмся к ней
+  };
 
   $('addGo').onclick = async () => {
     const name = $('addName').value.trim();
@@ -1558,6 +1622,7 @@ async function init() {
           map_url: addMapUrl,
           address: $('addAddr').value,
           note: $('addNote').value,
+          queue_id: addQueueId,
           ...picked,
         }),
       });
@@ -1565,7 +1630,9 @@ async function init() {
       await loadNiches();
       await loadLeads();
       await loadStats();
-      openLead(lead.id);                  // сразу показываем, что получилось
+      // Из очереди — обратно к очереди, за следующей карточкой
+      if (addQueueId) openQueue();
+      else openLead(lead.id);             // сразу показываем, что получилось
     } catch (e) {
       $('addErr').textContent = e.message;
       $('addErr').classList.add('on');
@@ -1573,6 +1640,135 @@ async function init() {
     $('addGo').disabled = false;
     $('addGo').textContent = 'Добавить';
   };
+
+  // ── очередь карточек с карт ──────────────────────────────────────────
+  let queueItems = [];
+
+  const showQueueCount = (n) => {
+    $('queueCount').textContent = n;
+    // Кнопка видна, когда есть что разбирать или очередь включена
+    $('btnQueue').hidden = !n && mapMode() !== 'queue';
+  };
+  const loadQueueCount = async () => {
+    try { showQueueCount((await api('/api/queue/count')).count); } catch (e) { /* не критично */ }
+  };
+
+  const nicheTitles = (guess) => {
+    if (!guess) return '';
+    const n = NICHES.niches.find((x) => String(x.id) === String(guess.niche));
+    const c = n && n.categories.find((x) => String(x.id) === String(guess.cat));
+    return n ? `${n.title}${c ? ' / ' + c.title : ''}` : '';
+  };
+
+  const renderQueue = () => {
+    showQueueCount(queueItems.length);
+    $('queueSaveAll').disabled = !queueItems.some((i) => !i.duplicate && i.guess);
+    if (!queueItems.length) {
+      $('queueList').innerHTML = `<div class="empty" style="padding:30px 10px">Очередь пуста.
+        ${mapMode() === 'queue' ? 'Нажимайте «В leadgen» на карточках в Яндекс Картах или 2ГИС.' : ''}</div>`;
+      return;
+    }
+    $('queueList').innerHTML = '<div class="qlist">' + queueItems.map((it) => {
+      const c = it.card;
+      const meta = [(c.phones || []).join(', '), c.address, c.website].filter(Boolean).map(esc).join(' · ');
+      const where = c.source === '2gis' ? '2ГИС' : 'Яндекс Карты';
+      const niche = nicheTitles(it.guess);
+      return `<div class="qitem${it.duplicate ? ' is-dup' : ''}" data-id="${it.id}">
+        <div class="qmain">
+          <div class="qname">${esc(c.name)}</div>
+          <div class="qmeta">${meta || 'контактов нет'}</div>
+          <div class="qmeta">${esc(where)}${c.rubric ? ': ' + esc(c.rubric) : ''} →
+            ${niche ? esc(niche) : '<b>нишу выберите сами</b>'} · добавил ${esc(it.added_by)}</div>
+          ${it.duplicate ? `<div class="qdup">Уже в базе: «${esc(it.duplicate)}»</div>` : ''}
+        </div>
+        <div class="qbtns">
+          ${it.duplicate ? '' : '<button class="qcheck">Проверить</button>'}
+          <button class="qdel" title="Убрать из очереди">Убрать</button>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  };
+
+  const openQueue = async () => {
+    $('queueMode').checked = mapMode() === 'queue';
+    $('queueErr').classList.remove('on');
+    $('queueList').innerHTML = '<div class="empty" style="padding:30px 10px">Загружаю…</div>';
+    if (!$('queueDialog').open) $('queueDialog').showModal();
+    try {
+      queueItems = (await api('/api/queue')).items;
+      queueItems.forEach((it) => { it.guess = guessCategory(it.card.rubric); });
+      renderQueue();
+    } catch (e) {
+      $('queueErr').textContent = 'Не загрузилась очередь: ' + e.message;
+      $('queueErr').classList.add('on');
+    }
+  };
+
+  $('btnQueue').onclick = openQueue;
+  $('queueClose').onclick = () => $('queueDialog').close();
+  $('queueMode').onchange = () => {
+    setMapMode($('queueMode').checked ? 'queue' : 'form');
+    showQueueCount(queueItems.length);
+  };
+
+  $('queueList').onclick = async (e) => {
+    const row = e.target.closest('.qitem');
+    if (!row) return;
+    const it = queueItems.find((x) => String(x.id) === row.dataset.id);
+    if (!it) return;
+    if (e.target.closest('.qcheck')) {
+      $('queueDialog').close();
+      openAdd(it.card, it.id);
+    } else if (e.target.closest('.qdel')) {
+      try {
+        await api(`/api/queue/${it.id}`, { method: 'DELETE' });
+        queueItems = queueItems.filter((x) => x !== it);
+        renderQueue();
+      } catch (err) { alert('Не получилось: ' + err.message); }
+    }
+  };
+
+  // Без проверки сохраняем только то, где ниша подобралась по рубрике и
+  // дубля в базе нет. Остальное остаётся в очереди — его смотрят руками.
+  $('queueSaveAll').onclick = async () => {
+    const todo = queueItems.filter((i) => !i.duplicate && i.guess);
+    if (!todo.length) return;
+    const btn = $('queueSaveAll');
+    btn.disabled = true;
+    $('queueErr').classList.remove('on');
+    const failed = [];
+    for (const [n, it] of todo.entries()) {
+      btn.textContent = `Сохраняю ${n + 1} из ${todo.length}…`;
+      const c = it.card;
+      try {
+        await api('/api/lead', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: c.name, website: c.website || '', phone: (c.phones || []).join(', '),
+            telegram: c.telegram || '', vk: c.vk || '', whatsapp: c.whatsapp || '',
+            email: c.email || '', map_url: c.map_url || '', address: c.address || '',
+            note: cardNote(c), niche_id: Number(it.guess.niche),
+            category_id: it.guess.cat ? Number(it.guess.cat) : null, queue_id: it.id,
+          }),
+        });
+      } catch (err) {
+        failed.push(`«${c.name}»: ${err.message}`);
+      }
+    }
+    btn.textContent = 'Сохранить все без дублей';
+    await openQueue();
+    loadNiches(); loadLeads(); loadStats();
+    if (failed.length) {
+      $('queueErr').innerHTML = 'Не сохранились:<br>' + failed.map(esc).join('<br>');
+      $('queueErr').classList.add('on');
+    }
+  };
+
+  loadQueueCount();
+  if (location.hash === '#queue') {
+    history.replaceState(null, '', location.pathname + location.search);
+    openQueue();
+  }
 
   $('btnImport').onclick = () => $('fileInput').click();
   $('fileInput').onchange = async () => {
@@ -1597,4 +1793,6 @@ async function init() {
   if (s.running) startPolling();
 }
 
-init();
+// Карточка с карт в режиме очереди — не грузим весь интерфейс
+if (location.hash.startsWith('#add=') && mapMode() === 'queue') catchToQueue();
+else init();

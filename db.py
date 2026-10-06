@@ -220,6 +220,17 @@ CREATE TABLE IF NOT EXISTS lead_notes (
     deleted INTEGER DEFAULT 0
 );
 
+-- Очередь карточек с карт: кнопка «В leadgen» в режиме очереди копит
+-- карточки здесь, а в базу лидов их переносит человек после проверки.
+-- Карточка — JSON в том виде, в каком её прочитала кнопка.
+CREATE TABLE IF NOT EXISTS map_queue (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    card     TEXT NOT NULL,
+    map_url  TEXT,
+    added_by TEXT NOT NULL,
+    added_at TEXT NOT NULL
+);
+
 
 -- Настройки расчётов: ставки вознаграждения, доли конвертов, пороги найма.
 -- В базе, а не в коде: договор с продажником прямо предусматривает пересмотр
@@ -842,6 +853,39 @@ def first_payment_at(lead_id: int) -> str:
 
 
 # ── журнал запусков ──────────────────────────────────────────────────────────
+
+# ── очередь карточек с карт ──────────────────────────────────────────────────
+
+def queue_add(card: dict, login: str):
+    """Кладёт карточку в очередь. Та же карточка второй раз не встаёт:
+    возвращает (id, False), если она уже ждёт проверки."""
+    c = conn()
+    map_url = card.get("map_url") or ""
+    if map_url:
+        row = c.execute("SELECT id FROM map_queue WHERE map_url=?", (map_url,)).fetchone()
+        if row:
+            return row["id"], False
+    cur = c.execute("INSERT INTO map_queue (card, map_url, added_by, added_at) VALUES (?,?,?,?)",
+                    (json.dumps(card, ensure_ascii=False), map_url, login, now()))
+    c.commit()
+    return cur.lastrowid, True
+
+
+def queue_list() -> list:
+    rows = conn().execute("SELECT * FROM map_queue ORDER BY id").fetchall()
+    return [dict(id=r["id"], card=json.loads(r["card"]), added_by=r["added_by"],
+                 added_at=r["added_at"]) for r in rows]
+
+
+def queue_count() -> int:
+    return conn().execute("SELECT COUNT(*) FROM map_queue").fetchone()[0]
+
+
+def queue_delete(item_id: int) -> None:
+    c = conn()
+    c.execute("DELETE FROM map_queue WHERE id=?", (item_id,))
+    c.commit()
+
 
 def run_start() -> int:
     c = conn()

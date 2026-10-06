@@ -702,3 +702,28 @@ a.bmlink {
   background: var(--accent); color: #fff; font-weight: 600; cursor: grab;
 }
 a.bmlink:hover { text-decoration: none; filter: brightness(1.07); }
+
+/* ── очередь карточек с карт ────────────────────────────────────────────── */
+dialog.queuedlg { max-width: 860px; width: calc(100% - 32px); }
+.qmode { align-items: flex-start; padding: 10px 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; }
+.qmode input { margin-top: 3px; }
+.qlist { max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.qitem { display: flex; gap: 12px; align-items: flex-start; padding: 10px 2px;
+  border-bottom: 1px solid var(--line); }
+.qitem .qmain { flex: 1; min-width: 0; }
+.qitem .qname { font-weight: 600; }
+.qitem .qmeta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.qitem .qdup { font-size: 12px; color: var(--warm); margin-top: 2px; }
+.qitem .qbtns { display: flex; gap: 6px; flex-shrink: 0; }
+.qitem .qbtns button { padding: 5px 10px; font-size: 13px; }
+.qitem.is-dup .qname { color: var(--muted); }
+.qitem.is-done { opacity: .5; }
+@media (max-width: 600px) {
+  .qitem { flex-wrap: wrap; }
+  .qitem .qbtns { width: 100%; justify-content: flex-end; }
+}
+/* Вкладка, которую открыла кнопка с карт в режиме очереди: одна строка и закрыться */
+.catch { display: flex; min-height: 100vh; align-items: center; justify-content: center;
+  padding: 16px; text-align: center; font-size: 17px; }
+.catch a { display: inline-block; margin-top: 10px; font-size: 14px; }

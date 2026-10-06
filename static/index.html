@@ -24,6 +24,7 @@
   <h1>Сборщик лидов</h1>
   <span class="city" id="cityLabel">—</span>
   <span class="spacer"></span>
+  <button id="btnQueue" hidden>Очередь с карт · <b id="queueCount">0</b></button>
   <button id="btnAdd">+ Объект</button>
   <button id="btnMenu" class="burger" aria-label="Меню" title="Меню">☰</button>
 </header>
@@ -201,6 +202,22 @@
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
     <button id="addCancel">Отмена</button>
     <button id="addGo" class="primary">Добавить</button>
+  </div>
+</dialog>
+
+<!-- Очередь карточек, которые кнопка «В leadgen» собрала с карт -->
+<dialog id="queueDialog" class="queuedlg">
+  <h3 style="margin-top:0">Очередь с карт</h3>
+  <label class="row qmode"><input type="checkbox" id="queueMode">
+    <span><b>Копить карточки в очереди</b><br>
+    <span class="muted" style="font-size:12px">Включено — кнопка «В leadgen» ставит карточку сюда
+      и сразу закрывает вкладку. Выключено — открывает форму объекта, как раньше.
+      Настройка этого браузера.</span></span></label>
+  <div class="err" id="queueErr"></div>
+  <div id="queueList"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+    <button id="queueClose">Закрыть</button>
+    <button id="queueSaveAll" class="primary">Сохранить все без дублей</button>
   </div>
 </dialog>
 
