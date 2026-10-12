@@ -487,7 +487,7 @@ UPSERT_FIELDS = [
     "online_booking", "booking_type", "booking_engine", "cms", "copyright_year", "load_ms",
     "domain_expires", "domain_age_days",
     "reason_code", "reason_text", "missing", "pitch", "score", "checked_at",
-    "aggregators",
+    "aggregators", "map_url",
 ]
 
 

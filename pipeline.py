@@ -406,6 +406,188 @@ def run(use_osm=True, use_dadata=True, do_whois=False, use_cache=True,
             _state["running"] = False
 
 
+def set_website(login, row, new):
+    """Новый адрес сайта: старый уходит в «Было», лид перепроверяется."""
+    c = db.conn()
+    lead_id = row["id"]
+    old = (row["website"] or "").strip()
+    # Старый адрес не затираем пустым: если сайт убрали совсем,
+    # прежняя ссылка всё равно пригодится для истории.
+    previous = old or (row["previous_website"] or "")
+    c.execute(
+        "UPDATE leads SET website=?, previous_website=?, website_manual=?, updated_at=? "
+        "WHERE id=?",
+        (new, previous, 1, db.now(), lead_id),
+    )
+    c.commit()
+    history.log(login, "website", lead=row, field="website", old=old, new=new)
+    return recheck_lead(lead_id, drop_site_contacts=True)
+
+
+# ── карточки Яндекс Карт из файла сборщика ───────────────────────────────────
+
+# Рубрика с карт → категория ниши «Бронирование». Проверяются по порядку
+MAP_RUBRICS = [
+    (r"бан[яи]|саун|хаммам|хамам|терм", "Баня / сауна"),
+    (r"хостел", "Хостел"),
+    (r"апарт", "Апартаменты"),
+    (r"гостевой дом", "Гостевой дом"),
+    (r"база отдыха|турбаз|загородн", "База отдыха"),
+    (r"глэмпинг|кемпинг", "Глэмпинг / кемпинг"),
+    (r"гостиниц|отел", "Отель"),
+]
+
+
+def _map_category(rubric, niche):
+    if niche != "booking":
+        return ""
+    for pattern, title in MAP_RUBRICS:
+        if re.search(pattern, rubric or "", re.I):
+            return title
+    return ""
+
+
+def _same_place(lead_id, card, vals):
+    """Совпадение по названию — тот же ли это объект: рядом или по тому же адресу."""
+    import mapmerge
+    from sources import yandex_maps
+    row = db.conn().execute("SELECT lat, lon, address FROM leads WHERE id=?", (lead_id,)).fetchone()
+    try:
+        lon, lat = map(float, (card.get("coords") or "").split(","))
+        if row["lat"] and row["lon"]:
+            return yandex_maps._distance_km((lat, lon), (row["lat"], row["lon"])) <= 1.0
+    except ValueError:
+        pass
+    return bool(row["address"] and vals["address"]
+                and mapmerge._same("address", row["address"], vals["address"]))
+
+
+def _card_lead(card, niche_id, niche):
+    """Новый лид из карточки сборщика."""
+    import mapmerge
+    vals = mapmerge.card_values(card)
+    try:
+        lon, lat = map(float, (card.get("coords") or "").split(","))
+    except ValueError:
+        lat = lon = None
+    src = {f: "Яндекс Карты" for f in ("telegram", "vk", "whatsapp", "email") if vals.get(f)}
+    if vals["phones"]:
+        src["phone"] = "Яндекс Карты"
+    detail = "Яндекс Карты" + (f": {card['rubric']}" if card.get("rubric") else "")
+    if card.get("rating"):
+        detail += f", рейтинг {card['rating']}"
+    return {
+        "name": vals["name"], "address": vals["address"], "lat": lat, "lon": lon,
+        "source": "yandex", "source_ref": str(card.get("id") or vals["map_url"]),
+        "source_detail": detail, "map_url": vals["map_url"],
+        "website": vals["website"], "aggregators": vals["aggregators"],
+        "phone": vals["phones"][0] if vals["phones"] else "", "phones": vals["phones"],
+        "telegram": vals["telegram"], "vk": vals["vk"], "whatsapp": vals["whatsapp"],
+        "email": vals["email"], "contact_source": src,
+        "category": _map_category(card.get("rubric"), niche), "niche_id": niche_id,
+    }
+
+
+def import_cards(cards, niche=niche_rules.DEFAULT, login=history.SYSTEM):
+    """Карточки с карт — в базу. Новые заводятся и проверяются как при сборе.
+
+    Уже известный объект (по ссылке на карточку, сайту, телефону, названию)
+    дополняется без перезаписи — по тем же правилам, что окно «Уже есть
+    в базе»: пустое заполняется, несовпавшее ложится рядом с пометкой
+    «с карт», телефоны дописываются. Название базы не трогаем."""
+    import mapmerge
+    with _lock:
+        if _state["running"]:
+            return
+        _state.update(running=True, log=[], done=0, total=0, error=None)
+    db.init()
+    run_id = db.run_start()
+    with _lock:
+        _state["run_id"] = run_id
+    try:
+        niche_id = niche_rules.niche_id_of(niche)
+        if not niche_id:
+            raise RuntimeError(f"Нет ниши с кодом {niche}")
+        _log(f"Яндекс Карты: {len(cards)} карточек → «{niche_rules.title_of(niche_id)}»")
+
+        new, merged, same, closed = [], 0, 0, 0
+        for card in cards:
+            if card.get("closed"):
+                closed += 1
+                continue
+            vals = mapmerge.card_values(card)
+            if not vals["name"]:
+                continue
+            c = db.conn()
+            mine = c.execute("SELECT id FROM leads WHERE source='yandex' AND source_ref=?",
+                             (str(card.get("id") or ""),)).fetchone()
+            # Карточка, сайт, телефон — надёжно. Одно название («Сауна», «Баня»)
+            # — нет: его подтверждаем местом, иначе склеим разные объекты
+            dup = mine or find_duplicate("", vals["website"], vals["phones"], vals["map_url"])
+            if not dup:
+                cand = find_duplicate(vals["name"], "", [], "")
+                if cand and _same_place(cand["id"], card, vals):
+                    dup = cand
+            if not dup:
+                new.append(_card_lead(card, niche_id, niche))
+                continue
+            lead = db.row_to_dict(c.execute("SELECT * FROM leads WHERE id=?", (dup["id"],)).fetchone())
+            d = mapmerge.diff(lead, card)
+            if not d["news"]:
+                same += 1
+                continue
+            choices = {r["field"]: ("fill" if r["kind"] == "fill" else "alt")
+                       for r in d["rows"] if r["kind"] in ("fill", "conflict") and r["field"] != "name"}
+            site, _ = mapmerge.apply(dup["id"], card, choices, True, login)
+            if site:
+                set_website(login, c.execute("SELECT * FROM leads WHERE id=?", (dup["id"],)).fetchone(), site)
+            else:
+                rescore_one(dup["id"])
+            merged += 1
+
+        _log(f"Уже в базе: дополнено {merged}, без новых данных {same}; "
+             f"закрыты навсегда {closed}; новых {len(new)} — проверяю сайты")
+        db.run_update(run_id, found=len(cards), stage="проверка сайтов")
+        with _lock:
+            _state["total"] = len(new)
+
+        egrul = bool(config.DADATA_TOKEN)
+        added = done = 0
+        with ThreadPoolExecutor(max_workers=config.HTTP_WORKERS) as pool:
+            futures = [pool.submit(process_lead, l, False, egrul) for l in new]
+            for fut in as_completed(futures):
+                done += 1
+                try:
+                    lead = fut.result()
+                except Exception as exc:
+                    _log(f"Пропускаю объект: {type(exc).__name__}: {exc}")
+                    continue
+                if db.upsert(lead) == "added":
+                    added += 1
+                with _lock:
+                    _state["done"] = done
+                if done % 25 == 0:
+                    _log(f"Проверено {done} из {len(new)}")
+
+        db.run_update(run_id, added=added, updated=merged, audited=done)
+        db.run_finish(run_id)
+        _log(f"Готово: новых {added}, дополнено {merged}, без изменений {same}")
+    except Exception as exc:
+        db.run_finish(run_id, error=f"{type(exc).__name__}: {exc}")
+        with _lock:
+            _state["error"] = str(exc)
+        _log(f"Ошибка: {exc}")
+    finally:
+        with _lock:
+            _state["running"] = False
+
+
+def import_cards_async(cards, **kw):
+    t = threading.Thread(target=import_cards, args=(cards,), kwargs=kw, daemon=True)
+    t.start()
+    return t
+
+
 def recheck_lead(lead_id, drop_site_contacts=False):
     """Перепроверяет один лид по текущему адресу сайта и пересчитывает балл.
 

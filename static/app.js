@@ -2203,6 +2203,22 @@ async function init() {
     $('fileInput').value = '';
   };
 
+  // Файл сборщика Яндекс Карт: грузится фоном, как сбор, — ход виден в той же панели
+  $('btnYandex').onclick = () => $('yandexFile').click();
+  $('yandexFile').onchange = async () => {
+    const f = $('yandexFile').files[0];
+    if (!f) return;
+    try {
+      const fd = new FormData(); fd.append('file', f);
+      const open = nicheById(currentNiche);
+      const r = await api('/api/import/yandex' + (open && open.code ? '?niche=' + open.code : ''),
+                          { method: 'POST', body: fd });
+      toast(`Загружаю ${r.cards} карточек с Яндекс Карт — ход виден в панели сбора`);
+      startPolling();
+    } catch (e) { alert('Не загрузилось: ' + e.message); }
+    $('yandexFile').value = '';
+  };
+
   const s = await api('/api/run/status');
   if (s.running) startPolling();
 }

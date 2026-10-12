@@ -45,6 +45,7 @@
   <button class="menuitem" id="btnBackup" hidden>Резервная копия сейчас</button>
   <button class="menuitem" id="btnRun">Запустить сбор</button>
   <button class="menuitem" id="btnImport">Импорт CSV</button>
+  <button class="menuitem" id="btnYandex" title="Файл сборщика yandex_collect.py">Импорт с Яндекс Карт</button>
   <button class="menuitem" id="btnExport">Выгрузить в CSV</button>
   <div class="menusep"></div>
   <button class="menuitem" id="btnLogout">Выйти</button>
@@ -236,6 +237,7 @@
 <div class="toast" id="toast" hidden></div>
 
 <input type="file" id="fileInput" accept=".csv" hidden>
+<input type="file" id="yandexFile" accept=".json" hidden>
 
 <script src="/static/heartbeat.js"></script>
 <script src="/static/histview.js"></script>

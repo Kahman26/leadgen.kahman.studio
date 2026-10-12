@@ -21,6 +21,7 @@ import db
 import history
 import mapmerge
 from enrich import aggregators
+from sources import yandex_maps
 import metrics
 import niche_rules
 import niches
@@ -1200,23 +1201,7 @@ def change_website(request: Request, lead_id: int, payload: dict = Body(...)):
 
 
 def _set_website(login, row, new):
-    """Новый адрес сайта: старый уходит в «Было», лид перепроверяется."""
-    c = db.conn()
-    lead_id = row["id"]
-    old = (row["website"] or "").strip()
-    # Старый адрес не затираем пустым: если сайт убрали совсем,
-    # прежняя ссылка всё равно пригодится для истории.
-    previous = old or (row["previous_website"] or "")
-
-    c.execute(
-        "UPDATE leads SET website=?, previous_website=?, website_manual=?, updated_at=? "
-        "WHERE id=?",
-        (new, previous, 1, db.now(), lead_id),
-    )
-    c.commit()
-    history.log(login, "website", lead=row, field="website", old=old, new=new)
-
-    return pipeline.recheck_lead(lead_id, drop_site_contacts=True)
+    return pipeline.set_website(login, row, new)
 
 
 @app.post("/api/lead/{lead_id}/recheck")
@@ -1328,6 +1313,26 @@ def export_csv(reason: str = "", status: str = "", category: str = "",
     return StreamingResponse(
         data, media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="leads.csv"'})
+
+
+@app.post("/api/import/yandex")
+async def import_yandex(request: Request, file: UploadFile = File(...), niche: str = ""):
+    """Файл сборщика Яндекс Карт (yandex_collect.py) — в базу, фоном, как сбор.
+
+    Новые объекты заводятся и проверяются, уже известные дополняются тем,
+    чего в базе нет, а расхождения ложатся рядом с пометкой «с карт»."""
+    if pipeline.state()["running"]:
+        raise HTTPException(409, "Сейчас идёт сбор — дождитесь его окончания")
+    try:
+        meta, cards = yandex_maps.load_cards(json.loads((await file.read()).decode("utf-8-sig")))
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "Это не файл сборщика Яндекс Карт")
+    if not cards:
+        raise HTTPException(400, "В файле нет карточек")
+    code = niche if niche in niche_rules.RULES else (meta.get("niche") or niche_rules.DEFAULT)
+    history.log(request.state.login, "import", new=f"Яндекс Карты: {len(cards)} карточек")
+    pipeline.import_cards_async(cards, niche=code, login=request.state.login)
+    return {"ok": True, "cards": len(cards)}
 
 
 @app.post("/api/import")
