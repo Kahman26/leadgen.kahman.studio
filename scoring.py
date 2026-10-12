@@ -172,7 +172,9 @@ def score_lead(lead, audit):
     # запись о ликвидации. Если проверка своими глазами видела работающий
     # объект — свежие отзывы, продажу номеров, живой сайт, — обнулять лид
     # нельзя: так мы прячем как раз тех, к кому стоит идти.
-    found_open = (lead.get("ai_is_open") or "") == "true"
+    found_open = ((lead.get("ai_is_open") or "") == "true"
+                  # Собран с живой карточки Яндекс Карт: закрытые сборщик пропускает
+                  or lead.get("source") == "yandex")
     if dead_org and lead.get("dadata_confidence") == "high" and not found_open:
         when = lead.get("liquidated_at") or ""
         gaps = [f"Организация ликвидирована по ЕГРЮЛ{f' ({when})' if when else ''}"]

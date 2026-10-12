@@ -202,6 +202,41 @@ def enrich_from_egrul(lead):
     return True
 
 
+def city_only_matches():
+    """Сверки с ЕГРЮЛ, где «адрес совпал» лишь словом «Екатеринбург» — до
+    исправления street_tokens такие засчитывались как уверенные."""
+    from enrich.dadata_lookup import PLACE_WORDS
+    out = []
+    for row in db.conn().execute("SELECT id, dadata_match FROM leads "
+                                 "WHERE COALESCE(dadata_match, '') LIKE '%адрес совпадает:%'"):
+        m = re.search(r"адрес совпадает: ([^;]+)", row["dadata_match"])
+        if m and {t.strip() for t in m.group(1).split(",")} <= PLACE_WORDS:
+            out.append(row["id"])
+    return out
+
+
+def reverify_egrul(ids):
+    """Заново сверяет с ЕГРЮЛ — без доверия к прежнему ИНН — и пересчитывает балл."""
+    c = db.conn()
+    fixed = 0
+    for lead_id in ids:
+        row = c.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+        if not row:
+            continue
+        lead = db.row_to_dict(row)
+        lead["dadata_confidence"] = ""           # прежнему совпадению не верим
+        enrich_from_egrul(lead)
+        changes = {f: lead.get(f) for f in EGRUL_FIELDS}
+        sets = ", ".join(f"{f}=?" for f in changes)
+        c.execute(f"UPDATE leads SET {sets} WHERE id=?", list(changes.values()) + [lead_id])
+        c.commit()
+        history.log_changes(history.SYSTEM, row, changes, action="recheck",
+                            only={"org_name", "org_status", "inn"})
+        rescore_one(lead_id)
+        fixed += 1
+    return fixed
+
+
 def process_lead(lead, do_whois=False, do_dadata=False):
     """Аудит сайта + добор контактов со страницы + скоринг."""
     if do_dadata:

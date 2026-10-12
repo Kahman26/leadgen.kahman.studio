@@ -52,12 +52,21 @@ def norm_name(value):
     return re.sub(r"[^a-zа-я0-9]+", "", s)
 
 
+# Город, область, страна и индекс есть в любом адресе города — совпадением
+# улицы они не считаются. Иначе «Люксор» на Предельной «совпадал» по адресу
+# с ликвидированным ООО «Люксор» на Азина: оба в Екатеринбурге
+PLACE_WORDS = {config.CITY_NAME.lower().replace("ё", "е"), config.CITY_REGION.lower(),
+               "свердловская", "область", "обл", "россия", "российская", "федерация",
+               "округ", "муниципальное", "образование"}
+
+
 def street_tokens(address):
     """Оставляет от адреса только значимые слова: название улицы и номер дома."""
     s = (address or "").lower().replace("ё", "е")
     s = STREET_NOISE.sub(" ", s)
     s = re.sub(r"[^a-zа-я0-9 ]+", " ", s)
-    return {t for t in s.split() if len(t) > 2}
+    return {t for t in s.split()
+            if len(t) > 2 and t not in PLACE_WORDS and not re.fullmatch(r"\d{6}", t)}
 
 
 def _ts_to_date(value):
