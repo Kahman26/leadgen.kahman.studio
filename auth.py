@@ -9,6 +9,9 @@
 Пароль можно хранить и хэшем, если не хочется держать его открытым:
 
     python auth.py hash мой-пароль
+
+Завести сотрудника на сервере одной командой (пароль придумается сам,
+в файл ляжет хэш): python auth.py adduser ЛОГИН
     LEADGEN_USERS=andrey:pbkdf2$200000$a1b2...$c3d4...
 
 Сессии лежат в таблице sessions: перезапуск сервиса не выкидывает команду
@@ -184,8 +187,95 @@ def authenticate(login, password, ip):
     return login.strip(), None
 
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "hash":
-        print(make_hash(sys.argv[2]))
+# ── заведение сотрудников ────────────────────────────────────────────────────
+
+ENV_FILE = "/etc/leadgen.env"
+# Без похожих знаков (l и 1, O и 0) — пароль диктуют и переписывают руками
+PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def make_password(length=8):
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(length))
+
+
+def _edit_users(path, fn):
+    """Переписывает строку LEADGEN_USERS в env-файле функцией fn(список записей)."""
+    lines = open(path, encoding="utf-8").read().split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("LEADGEN_USERS="):
+            users = [u for u in line.split("=", 1)[1].split(";") if u.strip()]
+            lines[i] = "LEADGEN_USERS=" + ";".join(fn(users))
+            break
     else:
-        print("Использование: python auth.py hash <пароль>")
+        lines.append("LEADGEN_USERS=" + ";".join(fn([])))
+    open(path, "w", encoding="utf-8").write("\n".join(lines))
+
+
+def add_user(login, password=None, path=ENV_FILE):
+    """Новый сотрудник с правами продажника. Возвращает пароль открытым текстом.
+
+    В файл пишется хэш: открытого пароля на сервере не остаётся."""
+    login = login.strip()
+    if not login or ":" in login or ";" in login:
+        raise ValueError("Логин без двоеточий и точек с запятой")
+    password = password or make_password()
+
+    def add(users):
+        if any(u.split(":", 1)[0].strip() == login for u in users):
+            raise ValueError(f"Логин {login} уже есть — для нового пароля: passwd")
+        return users + [f"{login}:{make_hash(password)}"]
+    _edit_users(path, add)
+    return password
+
+
+def set_password(login, password=None, path=ENV_FILE):
+    """Новый пароль существующему сотруднику. Возвращает его открытым текстом."""
+    password = password or make_password()
+    found = []
+
+    def change(users):
+        out = []
+        for u in users:
+            if u.split(":", 1)[0].strip() == login:
+                found.append(login)
+                u = f"{login}:{make_hash(password)}"
+            out.append(u)
+        return out
+    _edit_users(path, change)
+    if not found:
+        raise ValueError(f"Логина {login} нет — завести: adduser")
+    return password
+
+
+USAGE = """Использование:
+  python auth.py adduser ЛОГИН [пароль]   завести сотрудника (права продажника)
+  python auth.py passwd  ЛОГИН [пароль]   сменить пароль
+  python auth.py users                    кто заведён
+  python auth.py hash    пароль           только хэш
+Без пароля он придумывается сам. Файл — /etc/leadgen.env (или LEADGEN_ENV_FILE).
+После adduser и passwd: systemctl restart leadgen"""
+
+
+if __name__ == "__main__":
+    args, path = sys.argv[1:], os.getenv("LEADGEN_ENV_FILE", ENV_FILE)
+    try:
+        if len(args) == 2 and args[0] == "hash":
+            print(make_hash(args[1]))
+        elif len(args) in (2, 3) and args[0] in ("adduser", "passwd"):
+            fn = add_user if args[0] == "adduser" else set_password
+            pw = fn(args[1], args[2] if len(args) == 3 else None, path)
+            print(f"Логин: {args[1]}\nПароль: {pw}")
+            print("Перезапустите сервис: systemctl restart leadgen")
+        elif args == ["users"]:
+            line = next((l for l in open(path, encoding="utf-8").read().split("\n")
+                         if l.startswith("LEADGEN_USERS=")), "LEADGEN_USERS=")
+            admins = load_admins()
+            for u in line.split("=", 1)[1].split(";"):
+                if u.strip():
+                    name = u.split(":", 1)[0]
+                    print(name + ("  (владелец)" if name in admins else ""))
+        else:
+            print(USAGE)
+    except (ValueError, OSError) as exc:
+        print("Ошибка:", exc)
+        sys.exit(1)
