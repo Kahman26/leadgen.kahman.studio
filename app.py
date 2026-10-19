@@ -31,7 +31,9 @@ import refs
 import scoring
 from enrich import research_brief
 
-app = FastAPI(title="Сборщик лидов", docs_url=None, redoc_url=None)
+# Описание API наружу не отдаём никому, даже вошедшим: это карта всех
+# возможностей сервера, сотрудникам она ни к чему
+app = FastAPI(title="Сборщик лидов", docs_url=None, redoc_url=None, openapi_url=None)
 db.init()
 # Площадки, записанные в «сайт» раньше, чем сервис научился их отличать
 pipeline.move_platform_sites()
@@ -102,7 +104,10 @@ def login(request: Request, payload: dict = Body(...)):
         max_age=auth.SESSION_DAYS * 24 * 3600,
         httponly=True,                       # из JavaScript куку не достать
         samesite="lax",
-        secure=request.url.scheme == "https",
+        # За nginx сервис видит HTTP; о том, что снаружи HTTPS, говорит заголовок
+        # от nginx. Кука с secure не уйдёт по незашифрованному соединению
+        secure=request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https",
         path="/",
     )
     return response
